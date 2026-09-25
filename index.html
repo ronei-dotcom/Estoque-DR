@@ -3,8 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Estoque e Custos de Gado - Sociedade DR</title>
+    <title>Estoque DR - Gestão de Rebanho</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: #ffffff !important; padding: 0 !important; color: #0f172a !important; }
+            .print-container { max-width: 100% !important; box-shadow: none !important; border: none !important; padding: 0 !important; margin: 0 !important; }
+            @page { size: A4 portrait; margin: 1cm; }
+            
+            .page-block { break-inside: avoid !important; page-break-inside: avoid !important; }
+            
+            table.data-table { width: 100% !important; border-collapse: collapse !important; table-layout: fixed !important; }
+            table.data-table th { background-color: #065f46 !important; color: #ffffff !important; font-weight: bold !important; padding: 6px 8px !important; font-size: 8pt !important; border: 1px solid #065f46 !important; }
+            table.data-table td { padding: 6px 8px !important; border: 1px solid #cbd5e1 !important; font-size: 8.5pt !important; }
+            
+            .grid { display: block !important; }
+            .lg\:grid-cols-2 > div { width: 100% !important; margin-bottom: 20px !important; page-break-inside: avoid; }
+        }
+    </style>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -86,7 +105,7 @@
         };
 
         window.adicionarLocal = async function() {
-            const novoLocal = prompt("Digite o nome do Local:");
+            const novoLocal = prompt("Digite o nome do Local (Pasto/Fazenda):");
             if (novoLocal && novoLocal.trim() !== "") {
                 try {
                     await addDoc(colLocais, { nome: novoLocal.trim() });
@@ -167,12 +186,12 @@
                 alert("Erro ao salvar no banco de dados.");
             } finally {
                 btnSubmit.disabled = false;
-                btnSubmit.innerText = "Gravar Registro";
+                btnSubmit.innerText = "☁️ Salvar Movimentação";
             }
         });
 
         window.apagarMovimentacao = async function(idDoc) {
-            if(confirm("Deseja apagar este registro?")) {
+            if(confirm("Deseja apagar este registro? O estoque será recalculado.")) {
                 try {
                     await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
                 } catch(err) {
@@ -182,7 +201,7 @@
         };
 
         function formatarMoeda(valor) {
-            return `R$ ${valor.toLocaleString('pt-BR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}`;
+            return `R$ ${valor.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
         }
 
         function atualizarQuadroEstoqueECustos() {
@@ -245,17 +264,17 @@
                     }
 
                     const tr = document.createElement('tr');
-                    tr.className = "bg-white text-slate-800";
+                    tr.className = "border-b border-slate-200 hover:bg-slate-50";
 
                     let tdLocal = '';
                     if (primeiraLinha) {
-                        tdLocal = `<td class="border border-slate-400 p-2 text-center font-bold bg-slate-50 align-middle" rowspan="${spanLocal}">${local}</td>`;
+                        tdLocal = `<td class="p-1.5 text-center font-bold bg-slate-50 border border-slate-300 align-middle" rowspan="${spanLocal}">${local}</td>`;
                         primeiraLinha = false;
                     }
 
                     tr.innerHTML = `
-                        <td class="border border-slate-400 p-2 font-medium">${cat}</td>
-                        <td class="border border-slate-400 p-2 text-center font-bold">${qtd}</td>
+                        <td class="p-1.5 font-medium border border-slate-300 text-slate-800">${cat}</td>
+                        <td class="p-1.5 text-center font-bold border border-slate-300">${qtd}</td>
                         ${tdLocal}
                     `;
                     tbody.appendChild(tr);
@@ -263,7 +282,7 @@
             }
 
             if (totalGeral === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-500 border border-slate-400">Estoque zerado.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-400 border border-slate-300">Estoque zerado.</td></tr>';
             }
 
             document.getElementById('estoque-total').innerText = totalGeral;
@@ -289,7 +308,7 @@
 
             movimentacoes.forEach(mov => {
                 const tr = document.createElement('tr');
-                tr.className = "border-b border-slate-300 bg-white hover:bg-slate-50 text-xs";
+                tr.className = "border-b border-slate-200 bg-white hover:bg-slate-50 text-xs";
                 
                 const partesData = mov.data.split('-');
                 const dataFormatada = `${partesData[2]}/${partesData[1]}/${partesData[0]}`;
@@ -301,25 +320,29 @@
 
                 let infoExtra = '';
                 if (mov.fornecedor || mov.valorFinanceiro > 0) {
-                    infoExtra = `<br><span class="text-blue-700">Prov: ${mov.fornecedor || '-'} | ${formatarMoeda(mov.valorFinanceiro || 0)}</span>`;
+                    infoExtra = `<br><span class="text-emerald-700">Prov: ${mov.fornecedor || '-'} | ${formatarMoeda(mov.valorFinanceiro || 0)}</span>`;
                 }
 
                 tr.innerHTML = `
-                    <td class="p-2 text-center font-mono">${dataFormatada}</td>
-                    <td class="p-2 font-bold text-slate-700 uppercase">${mov.tipo}</td>
-                    <td class="p-2 text-center font-bold">${mov.quantidade}</td>
-                    <td class="p-2 text-slate-600">
+                    <td class="p-1.5 text-center font-mono text-slate-600">${dataFormatada}</td>
+                    <td class="p-1.5 font-bold text-slate-800 uppercase">${mov.tipo}</td>
+                    <td class="p-1.5 text-center font-bold text-slate-800">${mov.quantidade}</td>
+                    <td class="p-1.5 text-slate-600">
                         <b>Cat:</b> ${mov.categoria}<br>
                         <span class="text-[10px] text-slate-500 font-mono">${trajeto}</span>
                         ${infoExtra}
                     </td>
-                    <td class="p-2 text-center">
-                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-600 font-bold hover:underline text-[10px]">Excluir</button>
+                    <td class="p-1.5 text-center no-print">
+                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-slate-400 hover:text-red-600 text-[10px]">❌</button>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
         }
+
+        window.gerarRelatorioPDF = function() {
+            window.print();
+        };
 
         window.onload = () => {
             document.getElementById('data').valueAsDate = new Date();
@@ -327,102 +350,116 @@
         };
     </script>
 </head>
-<body class="bg-slate-100 min-h-screen p-2 md:p-6 font-sans">
+<body class="bg-slate-100 min-h-screen p-3 md:p-6">
 
-    <div class="max-w-6xl mx-auto space-y-6">
+    <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden p-4 md:p-6 print-container">
         
-        <div class="bg-slate-900 rounded shadow p-4 text-white flex justify-between items-center border-b-4 border-slate-600">
+        <!-- CABEÇALHO DO APLICATIVO / RELATÓRIO -->
+        <div class="border-b-2 border-emerald-800 pb-3 mb-4 flex justify-between items-end page-block">
             <div>
-                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-widest">Controle de Estoque e Custos</h1>
-                <p class="text-slate-400 text-xs tracking-wider">SOCIEDADE DR - PECUÁRIA</p>
+                <h1 class="text-xl md:text-2xl font-bold text-emerald-800 uppercase tracking-tight">Estoque DR</h1>
+                <p class="text-xs font-bold text-slate-600">CONTROLE DE REBANHO E CUSTOS — SOCIEDADE DR</p>
             </div>
-            <div class="text-right">
-                <p class="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Total de Cabeças</p>
-                <p class="text-3xl font-black leading-none"><span id="total-cabecas">0</span></p>
+            <div class="text-right text-[11px] text-slate-600 leading-tight">
+                <p><b>Operador:</b> Deivid | <b>Sócio:</b> Ronei</p>
+                <p><b>Posição Atualizada:</b> <span id="data-estoque">--/--/----</span></p>
             </div>
+        </div>
+
+        <!-- BARRA DE CONTROLE (OCULTA NO PDF) -->
+        <div class="flex justify-between items-center mb-4 no-print bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <span class="text-sm font-bold text-slate-700 flex items-center gap-1">📊 Relatório de Estoque e Operações</span>
+            <button onclick="gerarRelatorioPDF()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-lg text-xs flex items-center gap-2 shadow transition">
+                🖨️ Imprimir Relatório Completo
+            </button>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            <div class="space-y-6">
+            <!-- COLUNA ESQUERDA: RELATÓRIOS (IMPRESSOS NO PDF) -->
+            <div class="space-y-6 page-block">
+                
+                <!-- QUADRO DE ESTOQUE FÍSICO -->
                 <div>
-                    <div class="flex justify-between items-end mb-2">
-                        <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
-                        <button onclick="adicionarLocal()" class="text-xs font-bold text-slate-600 hover:text-slate-900 underline bg-slate-200 px-2 py-1 rounded">
+                    <div class="flex justify-between items-end mb-2 no-print">
+                        <h2 class="text-sm font-bold text-emerald-800 uppercase">Posição de Estoque</h2>
+                        <button onclick="adicionarLocal()" class="text-xs font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2 py-1 rounded-lg border border-emerald-300">
                             + Cadastrar Local
                         </button>
                     </div>
                     
-                    <div class="rounded shadow border-2 border-slate-700 overflow-hidden bg-white">
-                        <div class="bg-slate-700 text-white flex justify-between px-4 py-2 font-bold text-sm tracking-wider">
-                            <span>ESTOQUE</span>
-                            <span id="data-estoque">--/--/----</span>
-                        </div>
-                        <table class="w-full text-sm border-collapse">
-                            <thead class="bg-slate-300 text-slate-800 uppercase text-xs">
-                                <tr>
-                                    <th class="border border-slate-400 p-2 text-left w-5/12">Categorias</th>
-                                    <th class="border border-slate-400 p-2 text-center w-2/12">Saldo</th>
-                                    <th class="border border-slate-400 p-2 text-center w-5/12">Local</th>
+                    <div class="overflow-hidden">
+                        <table class="data-table w-full text-xs border-collapse border border-slate-300">
+                            <thead>
+                                <tr class="bg-emerald-800 text-white text-center font-bold">
+                                    <th class="p-1.5 border border-emerald-800 text-left w-5/12">Categorias</th>
+                                    <th class="p-1.5 border border-emerald-800 text-center w-2/12">Saldo</th>
+                                    <th class="p-1.5 border border-emerald-800 text-center w-5/12">Local</th>
                                 </tr>
                             </thead>
                             <tbody id="tabela-estoque-corpo">
                                 <tr><td colspan="3" class="p-4 text-center text-slate-400">Carregando...</td></tr>
                             </tbody>
-                            <tfoot class="bg-slate-200 font-bold text-slate-900 text-sm">
+                            <tfoot class="bg-slate-100 font-bold text-slate-800 text-xs">
                                 <tr>
-                                    <td class="border border-slate-400 p-2 text-center uppercase">Total</td>
-                                    <td class="border border-slate-400 p-2 text-center" id="estoque-total">0</td>
-                                    <td class="border border-slate-400 p-2"></td>
+                                    <td class="border border-slate-300 p-1.5 text-center uppercase">Total de Cabeças</td>
+                                    <td class="border border-slate-300 p-1.5 text-center text-emerald-800 text-sm" id="estoque-total">0</td>
+                                    <td class="border border-slate-300 p-1.5"></td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
 
-                    <div class="w-full md:w-3/5 mt-4">
-                        <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
+                    <!-- Resumo Sexo -->
+                    <div class="w-full md:w-3/5 mt-3">
+                        <table class="w-full text-xs border-collapse border border-slate-300 shadow-sm bg-white">
                             <tbody>
-                                <tr class="text-slate-800 font-semibold border-b border-slate-400">
-                                    <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Fêmeas</td>
-                                    <td class="p-2 text-center w-24 font-bold" id="total-femeas">0</td>
+                                <tr class="text-slate-800 font-semibold border-b border-slate-300">
+                                    <td class="border-r border-slate-300 p-1.5 text-center bg-slate-50">Fêmeas</td>
+                                    <td class="p-1.5 text-center w-24 font-bold text-emerald-700" id="total-femeas">0</td>
                                 </tr>
                                 <tr class="text-slate-800 font-semibold">
-                                    <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Machos</td>
-                                    <td class="p-2 text-center w-24 font-bold" id="total-machos">0</td>
+                                    <td class="border-r border-slate-300 p-1.5 text-center bg-slate-50">Machos</td>
+                                    <td class="p-1.5 text-center w-24 font-bold text-emerald-700" id="total-machos">0</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
-                <div>
-                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2">Relatório Financeiro do Rebanho</h2>
-                    <div class="rounded border border-slate-300 overflow-hidden shadow-sm bg-white">
-                        <table class="w-full text-sm border-collapse text-slate-900 font-medium">
+                <!-- QUADRO DE INDICADORES FINANCEIROS -->
+                <div class="page-block">
+                    <h2 class="text-sm font-bold text-emerald-800 uppercase mb-2">Resumo Financeiro do Rebanho</h2>
+                    <div class="overflow-hidden shadow-sm bg-white">
+                        <table class="w-full text-xs border-collapse text-slate-900 font-medium border border-slate-300">
                             <tbody>
-                                <tr class="border-b border-white">
-                                    <td class="bg-slate-200 p-2 w-1/2">Custo aquisição</td>
-                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-custo-aquisicao">R$ 0</td>
+                                <tr class="border-b border-slate-300">
+                                    <td class="bg-slate-50 p-2 border-r border-slate-300 w-1/2">Custo aquisição</td>
+                                    <td class="p-2 text-left font-bold text-red-700" id="val-custo-aquisicao">R$ 0,00</td>
                                 </tr>
                                 <tr>
-                                    <td class="bg-slate-200 p-2">Receita total</td>
-                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-total">R$ 0</td>
+                                    <td class="bg-slate-50 p-2 border-r border-slate-300">Receita total</td>
+                                    <td class="p-2 text-left font-bold text-emerald-700" id="val-receita-total">R$ 0,00</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
+
             </div>
 
-            <div class="space-y-6">
-                <div class="bg-white rounded border border-slate-300 shadow p-4">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase border-b border-slate-200 pb-2 mb-3">Registrar Movimentação</h2>
+            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO -->
+            <div class="space-y-6 page-block">
+                
+                <!-- FORMULÁRIO (OCULTO NO PDF) -->
+                <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 no-print">
+                    <h2 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1">➕ Registrar Movimentação</h2>
                     
                     <form id="form-movimentacao" class="space-y-3">
                         <div class="grid grid-cols-2 gap-3">
                             <div class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Operação</label>
-                                <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-slate-50 font-bold text-slate-800">
+                                <label class="block text-xs font-medium text-slate-600">Operação</label>
+                                <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm bg-white font-bold text-emerald-800">
                                     <option value="Compra">Entrada (Compra de Lote)</option>
                                     <option value="Nascimento">Entrada (Nascimento)</option>
                                     <option value="Transferência">Transferência</option>
@@ -433,8 +470,8 @@
                             </div>
                             
                             <div class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Categoria</label>
-                                <select id="categoria" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white">
+                                <label class="block text-xs font-medium text-slate-600">Categoria</label>
+                                <select id="categoria" class="w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm bg-white">
                                     <option value="Bezerros (M)">Bezerros (M)</option>
                                     <option value="Bezerras (F)">Bezerras (F)</option>
                                     <option value="Garrotes (M)">Garrotes (M)</option>
@@ -448,53 +485,65 @@
                             </div>
                             
                             <div>
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Data</label>
-                                <input type="date" id="data" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm">
+                                <label class="block text-xs font-medium text-slate-600">Data</label>
+                                <input type="date" id="data" required class="w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm bg-white">
                             </div>
                             
                             <div>
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Quantidade</label>
-                                <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm font-bold">
+                                <label class="block text-xs font-medium text-slate-600">Quantidade</label>
+                                <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm font-bold bg-white">
                             </div>
 
                             <div id="div-origem" class="hidden col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase text-red-700">Origem</label>
-                                <select id="origem" class="w-full mt-1 p-2 border border-red-400 rounded text-sm bg-white"></select>
+                                <label class="block text-xs font-bold text-slate-600 uppercase text-red-700">Origem (Saiu de)</label>
+                                <select id="origem" class="w-full mt-1 p-2 border border-red-300 rounded-lg text-sm bg-white"></select>
                             </div>
 
                             <div id="div-destino" class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase text-emerald-700">Destino</label>
-                                <select id="destino" class="w-full mt-1 p-2 border border-emerald-400 rounded text-sm bg-white"></select>
+                                <label class="block text-xs font-bold text-slate-600 uppercase text-emerald-700">Destino (Entrou em)</label>
+                                <select id="destino" class="w-full mt-1 p-2 border border-emerald-300 rounded-lg text-sm bg-white"></select>
                             </div>
                         </div>
 
+                        <!-- CAMPOS FINANCEIROS CONDICIONAIS -->
                         <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-200 mt-3">
                             <div id="div-fornecedor" class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Provedor / Fornecedor / Comprador</label>
-                                <input type="text" id="fornecedor" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm">
+                                <label class="block text-xs font-medium text-slate-600">Provedor / Fornecedor / Comprador</label>
+                                <input type="text" id="fornecedor" class="w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm bg-white">
                             </div>
                             <div id="div-valor" class="col-span-2">
-                                <label id="label-valor" class="block text-xs font-bold text-blue-700 uppercase">Custo / Receita Total (R$)</label>
-                                <input type="number" step="0.01" id="valor-financeiro" class="w-full mt-1 p-2 border border-blue-400 rounded text-sm font-bold bg-blue-50">
+                                <label id="label-valor" class="block text-xs font-bold text-emerald-700">Custo / Receita Total (R$)</label>
+                                <input type="number" step="0.01" id="valor-financeiro" class="w-full mt-1 p-2 border border-emerald-300 rounded-lg text-sm font-bold bg-emerald-50">
                             </div>
                         </div>
 
-                        <button type="submit" id="btn-submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded text-sm uppercase tracking-wide mt-4 transition">
-                            Gravar Registro
+                        <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow mt-4">
+                            ☁️ Salvar Movimentação
                         </button>
                     </form>
                 </div>
 
-                <div class="bg-white rounded border border-slate-300 shadow overflow-hidden">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico de Operações</h2>
-                    <div class="h-64 overflow-y-auto">
-                        <table class="w-full text-left border-collapse">
+                <!-- HISTÓRICO (IMPRESSO NO PDF) -->
+                <div class="page-block">
+                    <h2 class="text-sm font-bold text-emerald-800 uppercase mb-2">Histórico de Movimentações</h2>
+                    <div class="overflow-x-auto border border-slate-300 rounded-lg max-h-80 overflow-y-auto">
+                        <table class="data-table w-full text-left border-collapse text-xs">
+                            <thead class="sticky top-0">
+                                <tr class="bg-emerald-800 text-white font-bold">
+                                    <th class="p-1.5 border border-emerald-800 text-center w-[15%]">Data</th>
+                                    <th class="p-1.5 border border-emerald-800 w-[20%]">Tipo</th>
+                                    <th class="p-1.5 border border-emerald-800 text-center w-[10%]">Qtd</th>
+                                    <th class="p-1.5 border border-emerald-800 w-[50%]">Detalhes</th>
+                                    <th class="p-1.5 border border-emerald-800 text-center w-[5%] no-print">Ação</th>
+                                </tr>
+                            </thead>
                             <tbody id="tabela-historico">
-                                <!-- Preenchido via JS -->
+                                <tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação.</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
+
             </div>
         </div>
     </div>
