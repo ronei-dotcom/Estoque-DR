@@ -10,7 +10,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // CHAVES DO FIREBASE
         const firebaseConfig = {
             apiKey: "AIzaSyDgnDHu-dHCo5oZRo113M5jQ1kxwX9_1uE",
             authDomain: "sociedade-dr.firebaseapp.com",
@@ -29,7 +28,6 @@
         let locais = [];
         let movimentacoes = [];
 
-        // CARREGAR LOCAIS (PROPRIEDADES)
         onSnapshot(colLocais, (snapshot) => {
             locais = [];
             snapshot.forEach(d => locais.push({ id: d.id, nome: d.data().nome }));
@@ -37,7 +35,6 @@
             atualizarQuadroEstoque();
         });
 
-        // CARREGAR MOVIMENTAÇÕES
         const qMov = query(colMovimentacoes, orderBy("data", "desc"));
         onSnapshot(qMov, (snapshot) => {
             movimentacoes = [];
@@ -48,7 +45,6 @@
             atualizarQuadroEstoque();
         });
 
-        // CONTROLE DO FORMULÁRIO DINÂMICO
         window.mudarTipoMovimento = function() {
             const tipo = document.getElementById('tipo').value;
             const divOrigem = document.getElementById('div-origem');
@@ -66,15 +62,13 @@
             }
         };
 
-        // CADASTRAR NOVA PROPRIEDADE / PASTO
         window.adicionarLocal = async function() {
-            const novoLocal = prompt("Digite o nome da Propriedade / Pasto (Ex: Fazenda Primavera, Arrendamento Dinei):");
+            const novoLocal = prompt("Digite o nome do Local:");
             if (novoLocal && novoLocal.trim() !== "") {
                 try {
                     await addDoc(colLocais, { nome: novoLocal.trim() });
-                    alert("Propriedade cadastrada com sucesso!");
                 } catch (e) {
-                    alert("Erro ao cadastrar propriedade.");
+                    alert("Erro ao cadastrar local.");
                 }
             }
         };
@@ -86,8 +80,8 @@
             const valorOrigem = selectOrigem.value;
             const valorDestino = selectDestino.value;
 
-            selectOrigem.innerHTML = '<option value="">Selecione a Propriedade de Origem</option>';
-            selectDestino.innerHTML = '<option value="">Selecione a Propriedade de Destino</option>';
+            selectOrigem.innerHTML = '';
+            selectDestino.innerHTML = '';
 
             locais.sort((a,b) => a.nome.localeCompare(b.nome)).forEach(local => {
                 selectOrigem.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
@@ -98,7 +92,6 @@
             if (valorDestino) selectDestino.value = valorDestino;
         }
 
-        // SALVAR CADASTRO DO LOTE / MOVIMENTAÇÃO
         document.getElementById('form-movimentacao').addEventListener('submit', async function(e) {
             e.preventDefault();
 
@@ -108,16 +101,15 @@
             const categoria = document.getElementById('categoria').value;
             const origem = document.getElementById('origem').value;
             const destino = document.getElementById('destino').value;
-            const nomeLote = document.getElementById('nome-lote').value.trim();
 
             if ((tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte' || tipo === 'Transferência') && !origem) {
-                alert("Selecione de qual propriedade o gado está saindo (Origem)."); return;
+                alert("Selecione a Origem."); return;
             }
             if ((tipo === 'Compra' || tipo === 'Nascimento' || tipo === 'Transferência') && !destino) {
-                alert("Selecione em qual propriedade o gado vai ficar (Destino)."); return;
+                alert("Selecione o Destino."); return;
             }
             if (tipo === 'Transferência' && origem === destino) {
-                alert("A Origem e o Destino não podem ser a mesma propriedade."); return;
+                alert("A Origem e o Destino não podem ser iguais."); return;
             }
 
             const btnSubmit = document.getElementById('btn-submit');
@@ -132,13 +124,10 @@
                     categoria, 
                     origem: (tipo === 'Compra' || tipo === 'Nascimento') ? 'Externo' : origem,
                     destino: (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') ? 'Externo' : destino,
-                    nomeLote: nomeLote || 'Sem identificação', 
                     criadoEm: new Date().toISOString()
                 });
                 
                 document.getElementById('quantidade').value = '';
-                document.getElementById('nome-lote').value = '';
-                alert("Cadastro realizado com sucesso!");
             } catch (err) {
                 alert("Erro ao salvar no banco de dados.");
             } finally {
@@ -147,9 +136,8 @@
             }
         });
 
-        // APAGAR REGISTRO
         window.apagarMovimentacao = async function(idDoc) {
-            if(confirm("Deseja apagar este registro? O estoque será recalculado automaticamente.")) {
+            if(confirm("Deseja apagar este registro?")) {
                 try {
                     await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
                 } catch(err) {
@@ -158,7 +146,6 @@
             }
         };
 
-        // GERA O QUADRO SÉRIO DE ESTOQUE
         function atualizarQuadroEstoque() {
             const saldos = {};
             let totalGeral = 0;
@@ -229,7 +216,7 @@
             }
 
             if (totalGeral === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-500 border border-slate-400">Estoque zerado ou propriedades vazias.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-500 border border-slate-400">Estoque zerado.</td></tr>';
             }
 
             document.getElementById('estoque-total').innerText = totalGeral;
@@ -246,7 +233,7 @@
             corpoTabela.innerHTML = '';
 
             if (movimentacoes.length === 0) {
-                corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhum lote cadastrado ou movimentação realizada.</td></tr>';
+                corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação realizada.</td></tr>';
                 return;
             }
 
@@ -267,7 +254,6 @@
                     <td class="p-2 font-bold text-slate-700 uppercase">${mov.tipo}</td>
                     <td class="p-2 text-center font-bold">${mov.quantidade}</td>
                     <td class="p-2 text-slate-600">
-                        <b>Lote:</b> ${mov.nomeLote} <br>
                         <b>Cat:</b> ${mov.categoria}<br>
                         <span class="text-[10px] text-slate-500 font-mono">${trajeto}</span>
                     </td>
@@ -289,7 +275,6 @@
 
     <div class="max-w-5xl mx-auto space-y-6">
         
-        <!-- CABEÇALHO -->
         <div class="bg-slate-900 rounded shadow p-4 text-white flex justify-between items-center border-b-4 border-slate-600">
             <div>
                 <h1 class="text-xl md:text-2xl font-bold uppercase tracking-widest">Controle de Estoque</h1>
@@ -303,12 +288,11 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            <!-- QUADRO DE ESTOQUE (ESTILO RELATÓRIO) -->
             <div>
                 <div class="flex justify-between items-end mb-2">
                     <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
                     <button onclick="adicionarLocal()" class="text-xs font-bold text-slate-600 hover:text-slate-900 underline bg-slate-200 px-2 py-1 rounded">
-                        + Cadastrar Propriedade
+                        + Cadastrar Local
                     </button>
                 </div>
                 
@@ -338,7 +322,6 @@
                     </table>
                 </div>
 
-                <!-- RESUMO MACHOS/FÊMEAS -->
                 <div class="w-full md:w-3/5 mt-4">
                     <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
                         <tbody>
@@ -355,11 +338,10 @@
                 </div>
             </div>
 
-            <!-- FORMULÁRIO DE CADASTRO DE LOTE E HISTÓRICO -->
             <div class="space-y-6">
                 
                 <div class="bg-white rounded border border-slate-300 shadow p-4">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase border-b border-slate-200 pb-2 mb-3">Cadastrar Lote / Movimentação</h2>
+                    <h2 class="text-sm font-bold text-slate-800 uppercase border-b border-slate-200 pb-2 mb-3">Registrar Movimentação</h2>
                     
                     <form id="form-movimentacao" class="space-y-3">
                         <div class="grid grid-cols-2 gap-3">
@@ -368,7 +350,7 @@
                                 <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-slate-50 font-bold text-slate-800">
                                     <option value="Compra">Entrada (Compra de Lote)</option>
                                     <option value="Nascimento">Entrada (Nascimento)</option>
-                                    <option value="Transferência">Transferência de Propriedade</option>
+                                    <option value="Transferência">Transferência</option>
                                     <option value="Venda">Saída (Venda)</option>
                                     <option value="Abate">Saída (Abate)</option>
                                     <option value="Morte">Saída (Morte)</option>
@@ -376,12 +358,7 @@
                             </div>
                             
                             <div class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Identificação / Nome do Lote</label>
-                                <input type="text" id="nome-lote" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm" placeholder="Ex: Lote 01, Bezerrada Nelore, Fornecedor X">
-                            </div>
-
-                            <div class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase">Categoria dos Animais</label>
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Categoria</label>
                                 <select id="categoria" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white">
                                     <option value="Bezerro Macho">Bezerro Macho</option>
                                     <option value="Bezerro Fêmea">Bezerro Fêmea</option>
@@ -402,16 +379,16 @@
                             
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase">Quantidade</label>
-                                <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm font-bold" placeholder="0">
+                                <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm font-bold">
                             </div>
 
                             <div id="div-origem" class="hidden col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase text-red-700">Origem (Saiu de qual propriedade?)</label>
+                                <label class="block text-xs font-bold text-slate-600 uppercase text-red-700">Origem</label>
                                 <select id="origem" class="w-full mt-1 p-2 border border-red-400 rounded text-sm bg-white"></select>
                             </div>
 
                             <div id="div-destino" class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-600 uppercase text-emerald-700">Destino (Onde este lote vai ficar?)</label>
+                                <label class="block text-xs font-bold text-slate-600 uppercase text-emerald-700">Destino</label>
                                 <select id="destino" class="w-full mt-1 p-2 border border-emerald-400 rounded text-sm bg-white"></select>
                             </div>
                         </div>
@@ -423,7 +400,7 @@
                 </div>
 
                 <div class="bg-white rounded border border-slate-300 shadow overflow-hidden">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico de Lotes</h2>
+                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico</h2>
                     <div class="h-64 overflow-y-auto">
                         <table class="w-full text-left border-collapse">
                             <tbody id="tabela-historico">
