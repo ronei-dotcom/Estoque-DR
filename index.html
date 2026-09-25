@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Estoque de Gado - Sociedade DR</title>
+    <title>Estoque e Custos de Gado - Sociedade DR</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
     <script type="module">
@@ -32,7 +32,7 @@
             locais = [];
             snapshot.forEach(d => locais.push({ id: d.id, nome: d.data().nome }));
             atualizarSelectsLocais();
-            atualizarQuadroEstoque();
+            atualizarQuadroEstoqueECustos();
         });
 
         const qMov = query(colMovimentacoes, orderBy("data", "desc"));
@@ -42,23 +42,46 @@
                 movimentacoes.push({ idDoc: documento.id, ...documento.data() });
             });
             atualizarTabelaHistorico();
-            atualizarQuadroEstoque();
+            atualizarQuadroEstoqueECustos();
         });
 
         window.mudarTipoMovimento = function() {
             const tipo = document.getElementById('tipo').value;
             const divOrigem = document.getElementById('div-origem');
             const divDestino = document.getElementById('div-destino');
+            const divFornecedor = document.getElementById('div-fornecedor');
+            const divValor = document.getElementById('div-valor');
+            const labelValor = document.getElementById('label-valor');
             
             if (tipo === 'Compra' || tipo === 'Nascimento') {
                 divOrigem.classList.add('hidden');
                 divDestino.classList.remove('hidden');
+                
+                if(tipo === 'Compra') {
+                    divFornecedor.classList.remove('hidden');
+                    divValor.classList.remove('hidden');
+                    labelValor.innerText = "Custo Total da Compra (R$)";
+                } else {
+                    divFornecedor.classList.add('hidden');
+                    divValor.classList.add('hidden');
+                }
             } else if (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') {
                 divOrigem.classList.remove('hidden');
                 divDestino.classList.add('hidden');
+                
+                if (tipo === 'Venda' || tipo === 'Abate') {
+                    divFornecedor.classList.remove('hidden');
+                    divValor.classList.remove('hidden');
+                    labelValor.innerText = tipo === 'Venda' ? "Receita Total da Venda (R$)" : "Receita do Abate (R$)";
+                } else {
+                    divFornecedor.classList.add('hidden');
+                    divValor.classList.add('hidden');
+                }
             } else if (tipo === 'Transferência') {
                 divOrigem.classList.remove('hidden');
                 divDestino.classList.remove('hidden');
+                divFornecedor.classList.add('hidden');
+                divValor.classList.add('hidden');
             }
         };
 
@@ -101,6 +124,14 @@
             const categoria = document.getElementById('categoria').value;
             const origem = document.getElementById('origem').value;
             const destino = document.getElementById('destino').value;
+            
+            let fornecedor = '';
+            let valorFinanceiro = 0;
+
+            if (tipo === 'Compra' || tipo === 'Venda' || tipo === 'Abate') {
+                fornecedor = document.getElementById('fornecedor').value.trim();
+                valorFinanceiro = parseFloat(document.getElementById('valor-financeiro').value) || 0;
+            }
 
             if ((tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte' || tipo === 'Transferência') && !origem) {
                 alert("Selecione a Origem."); return;
@@ -124,10 +155,14 @@
                     categoria, 
                     origem: (tipo === 'Compra' || tipo === 'Nascimento') ? 'Externo' : origem,
                     destino: (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') ? 'Externo' : destino,
+                    fornecedor,
+                    valorFinanceiro,
                     criadoEm: new Date().toISOString()
                 });
                 
                 document.getElementById('quantidade').value = '';
+                document.getElementById('fornecedor').value = '';
+                document.getElementById('valor-financeiro').value = '';
             } catch (err) {
                 alert("Erro ao salvar no banco de dados.");
             } finally {
@@ -146,11 +181,20 @@
             }
         };
 
-        function atualizarQuadroEstoque() {
+        function formatarMoeda(valor) {
+            return `R$ ${valor.toLocaleString('pt-BR', {minimumFractionDigits: 0, maximumFractionDigits: 0})}`;
+        }
+
+        function atualizarQuadroEstoqueECustos() {
             const saldos = {};
             let totalGeral = 0;
             let totalFemeas = 0;
             let totalMachos = 0;
+
+            // Indicadores financeiros
+            let custoAquisicao = 0;
+            let receitaVenda = 0;
+            let receitaAbate = 0;
 
             locais.forEach(l => saldos[l.nome] = {});
 
@@ -158,19 +202,28 @@
                 const cat = mov.categoria;
                 const qtd = mov.quantidade;
 
-                if (mov.tipo === 'Compra' || mov.tipo === 'Nascimento') {
+                if (mov.tipo === 'Compra') {
+                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
+                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
+                    custoAquisicao += mov.valorFinanceiro || 0;
+                }
+                else if (mov.tipo === 'Nascimento') {
                     if (!saldos[mov.destino]) saldos[mov.destino] = {};
                     saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 } 
-                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') {
-                    if (saldos[mov.origem]) {
-                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    }
+                else if (mov.tipo === 'Venda') {
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                    receitaVenda += mov.valorFinanceiro || 0;
+                } 
+                else if (mov.tipo === 'Abate') {
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                    receitaAbate += mov.valorFinanceiro || 0;
+                }
+                else if (mov.tipo === 'Morte') {
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
                 } 
                 else if (mov.tipo === 'Transferência') {
-                    if (saldos[mov.origem]) {
-                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    }
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
                     if (!saldos[mov.destino]) saldos[mov.destino] = {};
                     saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 }
@@ -224,6 +277,11 @@
             document.getElementById('total-femeas').innerText = totalFemeas;
             document.getElementById('total-machos').innerText = totalMachos;
             
+            // Atualizar Tabela de Custos Financeiros
+            document.getElementById('val-custo-aquisicao').innerText = formatarMoeda(custoAquisicao);
+            document.getElementById('val-receita-venda').innerText = formatarMoeda(receitaVenda);
+            document.getElementById('val-receita-abate').innerText = formatarMoeda(receitaAbate);
+
             const hoje = new Date();
             document.getElementById('data-estoque').innerText = hoje.toLocaleDateString('pt-BR');
         }
@@ -249,6 +307,11 @@
                 else if(mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') trajeto = `Saiu de: <b>${mov.origem}</b>`;
                 else trajeto = `De: <b>${mov.origem}</b> ➔ Para: <b>${mov.destino}</b>`;
 
+                let infoExtra = '';
+                if (mov.fornecedor || mov.valorFinanceiro > 0) {
+                    infoExtra = `<br><span class="text-blue-700">Prov: ${mov.fornecedor || '-'} | ${formatarMoeda(mov.valorFinanceiro || 0)}</span>`;
+                }
+
                 tr.innerHTML = `
                     <td class="p-2 text-center font-mono">${dataFormatada}</td>
                     <td class="p-2 font-bold text-slate-700 uppercase">${mov.tipo}</td>
@@ -256,6 +319,7 @@
                     <td class="p-2 text-slate-600">
                         <b>Cat:</b> ${mov.categoria}<br>
                         <span class="text-[10px] text-slate-500 font-mono">${trajeto}</span>
+                        ${infoExtra}
                     </td>
                     <td class="p-2 text-center">
                         <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-600 font-bold hover:underline text-[10px]">Excluir</button>
@@ -273,11 +337,11 @@
 </head>
 <body class="bg-slate-100 min-h-screen p-2 md:p-6 font-sans">
 
-    <div class="max-w-5xl mx-auto space-y-6">
+    <div class="max-w-6xl mx-auto space-y-6">
         
         <div class="bg-slate-900 rounded shadow p-4 text-white flex justify-between items-center border-b-4 border-slate-600">
             <div>
-                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-widest">Controle de Estoque</h1>
+                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-widest">Controle de Estoque e Custos</h1>
                 <p class="text-slate-400 text-xs tracking-wider">SOCIEDADE DR - PECUÁRIA</p>
             </div>
             <div class="text-right">
@@ -288,56 +352,86 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            <div>
-                <div class="flex justify-between items-end mb-2">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
-                    <button onclick="adicionarLocal()" class="text-xs font-bold text-slate-600 hover:text-slate-900 underline bg-slate-200 px-2 py-1 rounded">
-                        + Cadastrar Local
-                    </button>
-                </div>
-                
-                <div class="rounded shadow border-2 border-slate-700 overflow-hidden bg-white">
-                    <div class="bg-slate-700 text-white flex justify-between px-4 py-2 font-bold text-sm tracking-wider">
-                        <span>ESTOQUE</span>
-                        <span id="data-estoque">--/--/----</span>
+            <!-- COLUNA ESQUERDA: RELATÓRIOS -->
+            <div class="space-y-6">
+                <!-- QUADRO DE ESTOQUE FÍSICO -->
+                <div>
+                    <div class="flex justify-between items-end mb-2">
+                        <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
+                        <button onclick="adicionarLocal()" class="text-xs font-bold text-slate-600 hover:text-slate-900 underline bg-slate-200 px-2 py-1 rounded">
+                            + Cadastrar Local
+                        </button>
                     </div>
-                    <table class="w-full text-sm border-collapse">
-                        <thead class="bg-slate-300 text-slate-800 uppercase text-xs">
-                            <tr>
-                                <th class="border border-slate-400 p-2 text-left w-5/12">Categorias</th>
-                                <th class="border border-slate-400 p-2 text-center w-2/12">Saldo</th>
-                                <th class="border border-slate-400 p-2 text-center w-5/12">Local</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-estoque-corpo">
-                            <tr><td colspan="3" class="p-4 text-center text-slate-400">Carregando...</td></tr>
-                        </tbody>
-                        <tfoot class="bg-slate-200 font-bold text-slate-900 text-sm">
-                            <tr>
-                                <td class="border border-slate-400 p-2 text-center uppercase">Total</td>
-                                <td class="border border-slate-400 p-2 text-center" id="estoque-total">0</td>
-                                <td class="border border-slate-400 p-2"></td>
-                            </tr>
-                        </tfoot>
-                    </table>
+                    
+                    <div class="rounded shadow border-2 border-slate-700 overflow-hidden bg-white">
+                        <div class="bg-slate-700 text-white flex justify-between px-4 py-2 font-bold text-sm tracking-wider">
+                            <span>ESTOQUE</span>
+                            <span id="data-estoque">--/--/----</span>
+                        </div>
+                        <table class="w-full text-sm border-collapse">
+                            <thead class="bg-slate-300 text-slate-800 uppercase text-xs">
+                                <tr>
+                                    <th class="border border-slate-400 p-2 text-left w-5/12">Categorias</th>
+                                    <th class="border border-slate-400 p-2 text-center w-2/12">Saldo</th>
+                                    <th class="border border-slate-400 p-2 text-center w-5/12">Local</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabela-estoque-corpo">
+                                <tr><td colspan="3" class="p-4 text-center text-slate-400">Carregando...</td></tr>
+                            </tbody>
+                            <tfoot class="bg-slate-200 font-bold text-slate-900 text-sm">
+                                <tr>
+                                    <td class="border border-slate-400 p-2 text-center uppercase">Total</td>
+                                    <td class="border border-slate-400 p-2 text-center" id="estoque-total">0</td>
+                                    <td class="border border-slate-400 p-2"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- Resumo Sexo -->
+                    <div class="w-full md:w-3/5 mt-4">
+                        <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
+                            <tbody>
+                                <tr class="text-slate-800 font-semibold border-b border-slate-400">
+                                    <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Fêmeas</td>
+                                    <td class="p-2 text-center w-24 font-bold" id="total-femeas">0</td>
+                                </tr>
+                                <tr class="text-slate-800 font-semibold">
+                                    <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Machos</td>
+                                    <td class="p-2 text-center w-24 font-bold" id="total-machos">0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
 
-                <div class="w-full md:w-3/5 mt-4">
-                    <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
-                        <tbody>
-                            <tr class="text-slate-800 font-semibold border-b border-slate-400">
-                                <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Fêmeas</td>
-                                <td class="p-2 text-center w-24 font-bold" id="total-femeas">0</td>
-                            </tr>
-                            <tr class="text-slate-800 font-semibold">
-                                <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Machos</td>
-                                <td class="p-2 text-center w-24 font-bold" id="total-machos">0</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <!-- QUADRO DE INDICADORES FINANCEIROS (ESTILO IMAGEM SOLICITADA) -->
+                <div>
+                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2">Relatório Financeiro do Rebanho</h2>
+                    <div class="rounded border border-slate-300 overflow-hidden shadow-sm bg-white">
+                        <table class="w-full text-sm border-collapse text-slate-900 font-medium">
+                            <tbody>
+                                <tr class="border-b border-white">
+                                    <td class="bg-slate-200 p-2 w-1/2">Custo [aquisição]</td>
+                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-custo-aquisicao">R$ 0</td>
+                                </tr>
+                                <tr class="border-b border-white">
+                                    <td class="bg-slate-200 p-2">Receita [venda]</td>
+                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-venda">R$ 0</td>
+                                </tr>
+                                <tr>
+                                    <td class="bg-slate-200 p-2">Receita [abate]</td>
+                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-abate">R$ 0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
+
             </div>
 
+            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO -->
             <div class="space-y-6">
                 
                 <div class="bg-white rounded border border-slate-300 shadow p-4">
@@ -393,14 +487,26 @@
                             </div>
                         </div>
 
-                        <button type="submit" id="btn-submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded text-sm uppercase tracking-wide mt-2 transition">
+                        <!-- CAMPOS FINANCEIROS CONDICIONAIS -->
+                        <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-200 mt-3">
+                            <div id="div-fornecedor" class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Provedor / Fornecedor / Comprador</label>
+                                <input type="text" id="fornecedor" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm" placeholder="Nome do Frigorífico, Vendedor...">
+                            </div>
+                            <div id="div-valor" class="col-span-2">
+                                <label id="label-valor" class="block text-xs font-bold text-blue-700 uppercase">Custo / Receita Total (R$)</label>
+                                <input type="number" step="0.01" id="valor-financeiro" class="w-full mt-1 p-2 border border-blue-400 rounded text-sm font-bold bg-blue-50" placeholder="0.00">
+                            </div>
+                        </div>
+
+                        <button type="submit" id="btn-submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded text-sm uppercase tracking-wide mt-4 transition">
                             Gravar Registro
                         </button>
                     </form>
                 </div>
 
                 <div class="bg-white rounded border border-slate-300 shadow overflow-hidden">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico</h2>
+                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico de Operações</h2>
                     <div class="h-64 overflow-y-auto">
                         <table class="w-full text-left border-collapse">
                             <tbody id="tabela-historico">
