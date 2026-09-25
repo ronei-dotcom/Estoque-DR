@@ -72,7 +72,7 @@
                 if (tipo === 'Venda' || tipo === 'Abate') {
                     divFornecedor.classList.remove('hidden');
                     divValor.classList.remove('hidden');
-                    labelValor.innerText = tipo === 'Venda' ? "Receita Total da Venda (R$)" : "Receita do Abate (R$)";
+                    labelValor.innerText = "Receita Total (R$)";
                 } else {
                     divFornecedor.classList.add('hidden');
                     divValor.classList.add('hidden');
@@ -193,8 +193,7 @@
 
             // Indicadores financeiros
             let custoAquisicao = 0;
-            let receitaVenda = 0;
-            let receitaAbate = 0;
+            let receitaTotal = 0;
 
             locais.forEach(l => saldos[l.nome] = {});
 
@@ -211,13 +210,9 @@
                     if (!saldos[mov.destino]) saldos[mov.destino] = {};
                     saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 } 
-                else if (mov.tipo === 'Venda') {
+                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate') {
                     if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    receitaVenda += mov.valorFinanceiro || 0;
-                } 
-                else if (mov.tipo === 'Abate') {
-                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    receitaAbate += mov.valorFinanceiro || 0;
+                    receitaTotal += mov.valorFinanceiro || 0;
                 }
                 else if (mov.tipo === 'Morte') {
                     if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
@@ -279,8 +274,7 @@
             
             // Atualizar Tabela de Custos Financeiros
             document.getElementById('val-custo-aquisicao').innerText = formatarMoeda(custoAquisicao);
-            document.getElementById('val-receita-venda').innerText = formatarMoeda(receitaVenda);
-            document.getElementById('val-receita-abate').innerText = formatarMoeda(receitaAbate);
+            document.getElementById('val-receita-total').innerText = formatarMoeda(receitaTotal);
 
             const hoje = new Date();
             document.getElementById('data-estoque').innerText = hoje.toLocaleDateString('pt-BR');
@@ -406,23 +400,19 @@
                     </div>
                 </div>
 
-                <!-- QUADRO DE INDICADORES FINANCEIROS (ESTILO IMAGEM SOLICITADA) -->
+                <!-- QUADRO DE INDICADORES FINANCEIROS -->
                 <div>
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-2">Relatório Financeiro do Rebanho</h2>
                     <div class="rounded border border-slate-300 overflow-hidden shadow-sm bg-white">
                         <table class="w-full text-sm border-collapse text-slate-900 font-medium">
                             <tbody>
                                 <tr class="border-b border-white">
-                                    <td class="bg-slate-200 p-2 w-1/2">Custo [aquisição]</td>
+                                    <td class="bg-slate-200 p-2 w-1/2">Custo aquisição</td>
                                     <td class="bg-slate-100 p-2 text-left font-bold" id="val-custo-aquisicao">R$ 0</td>
                                 </tr>
-                                <tr class="border-b border-white">
-                                    <td class="bg-slate-200 p-2">Receita [venda]</td>
-                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-venda">R$ 0</td>
-                                </tr>
                                 <tr>
-                                    <td class="bg-slate-200 p-2">Receita [abate]</td>
-                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-abate">R$ 0</td>
+                                    <td class="bg-slate-200 p-2">Receita total</td>
+                                    <td class="bg-slate-100 p-2 text-left font-bold" id="val-receita-total">R$ 0</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -491,7 +481,7 @@
                         <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-200 mt-3">
                             <div id="div-fornecedor" class="col-span-2">
                                 <label class="block text-xs font-bold text-slate-600 uppercase">Provedor / Fornecedor / Comprador</label>
-                                <input type="text" id="fornecedor" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm" placeholder="Nome do Frigorífico, Vendedor...">
+                                <input type="text" id="fornecedor" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm">
                             </div>
                             <div id="div-valor" class="col-span-2">
                                 <label id="label-valor" class="block text-xs font-bold text-blue-700 uppercase">Custo / Receita Total (R$)</label>
