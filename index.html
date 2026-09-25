@@ -3,781 +3,383 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Acerto DR - Gestão Financeira Pecuária</title>
+    <title>Estoque de Gado - Sociedade DR</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Biblioteca para Gerar Excel (.xlsx) -->
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <!-- SDKs do Firebase v10 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // CHAVE DO FIREBASE (BANCO DE DADOS)
+        // CHAVE DO FIREBASE (Mesmo banco de dados da Sociedade DR)
         const firebaseConfig = {
             apiKey: "AIzaSyDgnDHu-dHCo5oZRo113M5jQ1kxwX9_1uE",
             authDomain: "sociedade-dr.firebaseapp.com",
             projectId: "sociedade-dr",
             storageBucket: "sociedade-dr.firebasestorage.app",
             messagingSenderId: "200039389906",
-            appId: "1:200039389906:web:7e78b4389e99bfcb536b0b",
-            measurementId: "G-18PGSQ0RKF"
+            appId: "1:200039389906:web:7e78b4389e99bfcb536b0b"
         };
-
-        // CHAVE MINDEE API (OCR DE NOTAS FISCAIS)
-        const mindeeApiKey = "md_kn0mRSDwl2MHTU_BVLd5crY2Z7DEPKLF6A95He_AizU";
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        const colRef = collection(db, "lancamentos_dr");
-        const colCcRef = collection(db, "centros_custo_dr");
-        const configDocRef = doc(db, "configuracoes_dr", "saldo_inicial");
+        
+        // Novas coleções exclusivas para o gado
+        const colLocais = collection(db, "locais_gado_dr");
+        const colMovimentacoes = collection(db, "movimentacoes_gado_dr");
 
-        let lancamentos = [];
-        let centrosCusto = ["Geral", "Arrendamento", "Nutrição / Ração", "Mão de Obra", "Infraestrutura", "Frete", "Compra de Gado", "Outros"];
-        let editandoId = null;
-        let saldoInicialObj = { valor: 0, credor: "Nenhum" };
+        let locais = [];
+        let movimentacoes = [];
 
-        // CARREGAR SALDO INICIAL
-        onSnapshot(configDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-                saldoInicialObj = docSnap.data();
-            }
-            atualizarTela();
+        // 1. CARREGAR LOCAIS (FAZENDAS/PASTOS)
+        onSnapshot(colLocais, (snapshot) => {
+            locais = [];
+            snapshot.forEach(d => locais.push({ id: d.id, nome: d.data().nome }));
+            atualizarSelectsLocais();
+            atualizarPainelSaldos();
         });
 
-        // CARREGAR CENTROS DE CUSTO
-        onSnapshot(colCcRef, (snapshot) => {
-            const ccNuvem = [];
-            snapshot.forEach(d => ccNuvem.push(d.data().nome));
-            if (ccNuvem.length > 0) {
-                centrosCusto = Array.from(new Set([...centrosCusto, ...ccNuvem]));
-            }
-            atualizarSelectsCC();
-        });
-
-        // ESCUTAR LANÇAMENTOS EM TEMPO REAL
-        const q = query(colRef, orderBy("data", "asc"));
-        onSnapshot(q, (snapshot) => {
-            lancamentos = [];
+        // 2. CARREGAR MOVIMENTAÇÕES (COMPRAS, VENDAS, TRANSFERÊNCIAS)
+        const qMov = query(colMovimentacoes, orderBy("data", "desc"));
+        onSnapshot(qMov, (snapshot) => {
+            movimentacoes = [];
             snapshot.forEach((documento) => {
-                lancamentos.push({
-                    idDoc: documento.id,
-                    ...documento.data()
-                });
+                movimentacoes.push({ idDoc: documento.id, ...documento.data() });
             });
-            atualizarTela();
+            atualizarTabela();
+            atualizarPainelSaldos();
         });
 
-        // CONVERTER ARQUIVO PARA BASE64 (Para salvar no Firebase)
-        function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                if (!file) resolve(null);
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = error => reject(error);
-            });
-        }
-
-        // LER NOTA FISCAL COM API MINDEE
-        window.lerComprovanteIA = async function() {
-            const fileInput = document.getElementById('anexo-pdf');
-            if (fileInput.files.length === 0) {
-                alert("Primeiro, selecione uma foto ou PDF no campo de anexo!");
-                return;
-            }
+        // CONTROLAR VISIBILIDADE DOS CAMPOS DE ORIGEM E DESTINO
+        window.mudarTipoMovimento = function() {
+            const tipo = document.getElementById('tipo').value;
+            const divOrigem = document.getElementById('div-origem');
+            const divDestino = document.getElementById('div-destino');
             
-            const file = fileInput.files[0];
-            const statusElem = document.getElementById('status-ocr');
-            statusElem.innerText = "⏳ Lendo a nota com Mindee IA... Aguarde.";
-            statusElem.className = "text-[10px] font-bold text-amber-600 mt-1 block";
-
-            const formData = new FormData();
-            formData.append("document", file);
-
-            try {
-                const response = await fetch("https://api.mindee.net/v1/products/mindee/invoices/v4/predict", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Token ${mindeeApiKey}`
-                    },
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    throw new Error("Erro na comunicação com a API da Mindee.");
-                }
-
-                const jsonResponse = await response.json();
-                const prediction = jsonResponse.document.inference.prediction;
-
-                const fornecedor = prediction.supplier_name?.value || "";
-                const valorTotal = prediction.total_amount?.value || "";
-                const dataEmissao = prediction.date?.value || "";
-
-                if (fornecedor) document.getElementById('descricao').value = fornecedor;
-                if (valorTotal) document.getElementById('valor').value = valorTotal;
-                if (dataEmissao) document.getElementById('data').value = dataEmissao;
-
-                statusElem.innerText = "✅ Dados extraídos com sucesso! Selecione a Categoria e quem pagou.";
-                statusElem.className = "text-[10px] font-bold text-emerald-700 mt-1 block";
-            } catch (err) {
-                console.error(err);
-                statusElem.innerText = "❌ Falha ao ler a nota. Verifique se a foto está nítida ou digite manualmente.";
-                statusElem.className = "text-[10px] font-bold text-red-600 mt-1 block";
+            if (tipo === 'Compra' || tipo === 'Nascimento') {
+                divOrigem.classList.add('hidden');
+                divDestino.classList.remove('hidden');
+            } else if (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') {
+                divOrigem.classList.remove('hidden');
+                divDestino.classList.add('hidden');
+            } else if (tipo === 'Transferência') {
+                divOrigem.classList.remove('hidden');
+                divDestino.classList.remove('hidden');
             }
         };
 
-        // SALVAR OU EDITAR LANÇAMENTO
-        document.getElementById('form-lancamento').addEventListener('submit', async function(e) {
+        // CADASTRAR NOVO LOCAL (FAZENDA OU PASTO)
+        window.adicionarLocal = async function() {
+            const novoLocal = prompt("Digite o nome da Fazenda/Arrendamento e o Pasto (Ex: Arrendamento Dinei - Lote Fundo):");
+            if (novoLocal && novoLocal.trim() !== "") {
+                try {
+                    await addDoc(colLocais, { nome: novoLocal.trim() });
+                    alert("Local cadastrado com sucesso!");
+                } catch (e) {
+                    alert("Erro ao cadastrar local.");
+                }
+            }
+        };
+
+        // ATUALIZAR LISTAS DE SELEÇÃO
+        function atualizarSelectsLocais() {
+            const selectOrigem = document.getElementById('origem');
+            const selectDestino = document.getElementById('destino');
+            const selectFiltro = document.getElementById('filtro-local');
+
+            const valorOrigem = selectOrigem.value;
+            const valorDestino = selectDestino.value;
+            const valorFiltro = selectFiltro.value;
+
+            selectOrigem.innerHTML = '<option value="">Selecione o Local de Origem</option>';
+            selectDestino.innerHTML = '<option value="">Selecione o Local de Destino</option>';
+            selectFiltro.innerHTML = '<option value="">Todos os Locais</option>';
+
+            locais.sort((a,b) => a.nome.localeCompare(b.nome)).forEach(local => {
+                selectOrigem.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
+                selectDestino.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
+                selectFiltro.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
+            });
+
+            if (valorOrigem) selectOrigem.value = valorOrigem;
+            if (valorDestino) selectDestino.value = valorDestino;
+            if (valorFiltro) selectFiltro.value = valorFiltro;
+        }
+
+        // SALVAR MOVIMENTAÇÃO
+        document.getElementById('form-movimentacao').addEventListener('submit', async function(e) {
             e.preventDefault();
 
-            const descricao = document.getElementById('descricao').value;
-            const valor = parseFloat(document.getElementById('valor').value) || 0;
+            const tipo = document.getElementById('tipo').value;
             const data = document.getElementById('data').value;
+            const quantidade = parseInt(document.getElementById('quantidade').value) || 0;
             const categoria = document.getElementById('categoria').value;
-            const centroCusto = document.getElementById('centro-custo').value;
-            const socio = document.getElementById('socio-pagador').value;
-            const isPendente = document.getElementById('is-pendente').checked;
-            const fileInput = document.getElementById('anexo-pdf');
+            const origem = document.getElementById('origem').value;
+            const destino = document.getElementById('destino').value;
+            const observacao = document.getElementById('observacao').value;
 
-            let anexoData = null;
-            if (fileInput.files.length > 0) {
-                anexoData = await fileToBase64(fileInput.files[0]);
+            // Validações
+            if ((tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte' || tipo === 'Transferência') && !origem) {
+                alert("Por favor, informe o local de ORIGEM do gado."); return;
+            }
+            if ((tipo === 'Compra' || tipo === 'Nascimento' || tipo === 'Transferência') && !destino) {
+                alert("Por favor, informe o local de DESTINO do gado."); return;
+            }
+            if (tipo === 'Transferência' && origem === destino) {
+                alert("A Origem e o Destino não podem ser o mesmo local."); return;
             }
 
             try {
-                if (editandoId) {
-                    const updateObj = { 
-                        descricao, 
-                        valor, 
-                        data, 
-                        categoria, 
-                        centroCusto, 
-                        socio,
-                        pendente: isPendente
-                    };
-                    
-                    if (anexoData) {
-                        updateObj.anexoData = anexoData;
-                    }
-
-                    await updateDoc(doc(db, "lancamentos_dr", editandoId), updateObj);
-                    cancelarEdicao();
-                } else {
-                    await addDoc(colRef, {
-                        descricao,
-                        valor,
-                        data,
-                        categoria,
-                        centroCusto: centroCusto || "Geral",
-                        socio,
-                        pendente: isPendente,
-                        anexoData: anexoData || null,
-                        criadoEm: new Date().toISOString()
-                    });
-                    limparFormulario();
-                }
+                await addDoc(colMovimentacoes, {
+                    tipo, data, quantidade, categoria, 
+                    origem: (tipo === 'Compra' || tipo === 'Nascimento') ? 'Externo' : origem,
+                    destino: (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') ? 'Externo' : destino,
+                    observacao, criadoEm: new Date().toISOString()
+                });
+                
+                document.getElementById('quantidade').value = '';
+                document.getElementById('observacao').value = '';
+                alert("Movimentação registrada com sucesso!");
             } catch (err) {
-                alert("Erro ao salvar no banco de dados: " + err.message);
+                alert("Erro ao salvar: " + err.message);
             }
         });
 
-        // EXPORTAR PARA EXCEL (.XLSX)
-        window.exportarExcel = function() {
-            if (lancamentos.length === 0) {
-                alert("Não há lançamentos para exportar.");
+        // APAGAR MOVIMENTAÇÃO
+        window.apagarMovimentacao = async function(idDoc) {
+            if(confirm("Deseja apagar este registro? Isso afetará os saldos automaticamente.")) {
+                try {
+                    await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
+                } catch(err) {
+                    alert("Erro ao excluir.");
+                }
+            }
+        };
+
+        // CALCULAR E ATUALIZAR SALDOS
+        function atualizarPainelSaldos() {
+            const saldos = {};
+            let totalGeral = 0;
+
+            // Iniciar com zero
+            locais.forEach(l => saldos[l.nome] = 0);
+
+            // Calcular com base no histórico
+            movimentacoes.forEach(mov => {
+                if (mov.tipo === 'Compra' || mov.tipo === 'Nascimento') {
+                    if(saldos[mov.destino] !== undefined) saldos[mov.destino] += mov.quantidade;
+                    totalGeral += mov.quantidade;
+                } 
+                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') {
+                    if(saldos[mov.origem] !== undefined) saldos[mov.origem] -= mov.quantidade;
+                    totalGeral -= mov.quantidade;
+                } 
+                else if (mov.tipo === 'Transferência') {
+                    if(saldos[mov.origem] !== undefined) saldos[mov.origem] -= mov.quantidade;
+                    if(saldos[mov.destino] !== undefined) saldos[mov.destino] += mov.quantidade;
+                }
+            });
+
+            // Mostrar na tela
+            document.getElementById('total-cabecas').innerText = totalGeral;
+            
+            const gridSaldos = document.getElementById('grid-saldos-locais');
+            gridSaldos.innerHTML = '';
+            
+            for (const [nomeLocal, qtd] of Object.entries(saldos)) {
+                if (qtd > 0) {
+                    gridSaldos.innerHTML += `
+                        <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex justify-between items-center shadow-sm">
+                            <span class="text-sm font-semibold text-blue-900">${nomeLocal}</span>
+                            <span class="text-lg font-bold text-blue-700">${qtd} <span class="text-xs font-normal">cbçs</span></span>
+                        </div>
+                    `;
+                }
+            }
+
+            if (gridSaldos.innerHTML === '') {
+                gridSaldos.innerHTML = '<p class="text-xs text-slate-400">Nenhum gado em estoque nos pastos cadastrados.</p>';
+            }
+        }
+
+        // ATUALIZAR TABELA DE HISTÓRICO
+        window.atualizarTabela = function() {
+            const corpoTabela = document.getElementById('tabela-historico');
+            const filtroFiltro = document.getElementById('filtro-local').value;
+
+            corpoTabela.innerHTML = '';
+
+            let movsFiltradas = movimentacoes;
+            if (filtroFiltro) {
+                movsFiltradas = movimentacoes.filter(m => m.origem === filtroFiltro || m.destino === filtroFiltro);
+            }
+
+            if (movsFiltradas.length === 0) {
+                corpoTabela.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-slate-400">Nenhuma movimentação encontrada.</td></tr>';
                 return;
             }
 
-            let totalRonei = 0;
-            let totalDeivid = 0;
-            let saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0));
+            movsFiltradas.forEach(mov => {
+                let icone = '🔄';
+                let cor = 'text-slate-700';
+                
+                if(mov.tipo === 'Compra' || mov.tipo === 'Nascimento') { icone = '🟢'; cor = 'text-emerald-600 font-bold'; }
+                if(mov.tipo === 'Venda' || mov.tipo === 'Abate') { icone = '🔴'; cor = 'text-red-600 font-bold'; }
+                if(mov.tipo === 'Morte') { icone = '⚫'; cor = 'text-slate-900 font-bold'; }
+                if(mov.tipo === 'Transferência') { icone = '🔵'; cor = 'text-blue-600 font-bold'; }
 
-            const dadosExcel = lancamentos.map((item, index) => {
-                let aporteRonei = 0;
-                let aporteDeivid = 0;
-
-                if (item.categoria === 'Transferência entre Sócios') {
-                    if (item.socio === 'Ronei') totalRonei += item.valor * 2;
-                    else if (item.socio === 'Deivid') totalDeivid += item.valor * 2;
-                } else {
-                    aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
-                    aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
-                    totalRonei += aporteRonei;
-                    totalDeivid += aporteDeivid;
-                }
-
-                saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
-
-                return {
-                    "Nº": index + 1,
-                    "Data": formatarData(item.data),
-                    "Descrição": item.descricao,
-                    "Centro de Custo": item.centroCusto || 'Geral',
-                    "Categoria": item.categoria || 'Outros',
-                    "Sócio Pagador": item.socio,
-                    "Status": item.pendente ? "🟡 Pendente" : "Concluído",
-                    "Ronei (R$)": aporteRonei,
-                    "Deivid (R$)": aporteDeivid,
-                    "Saldo Deivid (R$)": saldoAcumulado
-                };
-            });
-
-            const worksheet = XLSX.utils.json_to_sheet(dadosExcel);
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, "Sociedade DR");
-
-            const dataAtual = new Date().toISOString().slice(0,10);
-            XLSX.writeFile(workbook, `Extrato_Sociedade_DR_${dataAtual}.xlsx`);
-        };
-
-        // DEFINIR SALDO INICIAL
-        window.configurarSaldoInicial = async function() {
-            const valStr = prompt("Digite o valor do Saldo Inicial acumulado (R$):", saldoInicialObj.valor || "0");
-            if (valStr === null) return;
-            const val = parseFloat(valStr.replace(',', '.')) || 0;
-
-            let credor = "Nenhum";
-            if (val > 0) {
-                const opcao = prompt("Quem tem a RECEBER esse valor inicial?\nDigite 1 para DEIVID\nDigite 2 para RONEI", "1");
-                if (opcao === "1") credor = "Deivid";
-                if (opcao === "2") credor = "Ronei";
-            }
-
-            try {
-                await setDoc(configDocRef, { valor: val, credor: credor });
-                alert("Saldo inicial atualizado com sucesso!");
-            } catch(e) {
-                alert("Erro ao salvar saldo inicial.");
-            }
-        };
-
-        // PREPARAR EDICAO
-        window.prepararEdicao = function(idDoc) {
-            const item = lancamentos.find(l => l.idDoc === idDoc);
-            if (!item) return;
-
-            editandoId = idDoc;
-            document.getElementById('descricao').value = item.descricao;
-            document.getElementById('valor').value = item.valor;
-            document.getElementById('data').value = item.data;
-            document.getElementById('categoria').value = item.categoria || 'Outros';
-            document.getElementById('centro-custo').value = item.centroCusto || 'Geral';
-            document.getElementById('socio-pagador').value = item.socio;
-            document.getElementById('is-pendente').checked = !!item.pendente;
-            document.getElementById('status-ocr').innerText = '';
-
-            if (item.anexoData) {
-                document.getElementById('container-remover-anexo').classList.remove('hidden');
-            } else {
-                document.getElementById('container-remover-anexo').classList.add('hidden');
-            }
-
-            document.getElementById('btn-submit').innerText = "💾 Atualizar Lançamento";
-            document.getElementById('btn-submit').className = "w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow";
-            document.getElementById('btn-cancelar-edicao').classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        };
-
-        window.removerAnexoExistente = async function() {
-            if (!editandoId) return;
-            if (confirm("Deseja remover o anexo/comprovante deste lançamento?")) {
-                try {
-                    await updateDoc(doc(db, "lancamentos_dr", editandoId), { anexoData: null });
-                    document.getElementById('container-remover-anexo').classList.add('hidden');
-                    alert("Anexo removido com sucesso!");
-                } catch(e) {
-                    alert("Erro ao remover anexo.");
-                }
-            }
-        };
-
-        window.cancelarEdicao = function() {
-            editandoId = null;
-            limparFormulario();
-            document.getElementById('btn-submit').innerText = "☁️ Salvar no Banco de Dados (Nuvem)";
-            document.getElementById('btn-submit').className = "w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow";
-            document.getElementById('btn-cancelar-edicao').classList.add('hidden');
-            document.getElementById('container-remover-anexo').classList.add('hidden');
-        };
-
-        function limparFormulario() {
-            document.getElementById('descricao').value = '';
-            document.getElementById('valor').value = '';
-            document.getElementById('anexo-pdf').value = '';
-            document.getElementById('is-pendente').checked = false;
-            document.getElementById('status-ocr').innerText = '';
-        }
-
-        // EXCLUIR ITEM
-        window.apagarItem = async function(idDoc) {
-            if(confirm("Deseja excluir este lançamento permanentemente?")) {
-                try {
-                    await deleteDoc(doc(db, "lancamentos_dr", idDoc));
-                } catch(err) {
-                    alert("Erro ao excluir: " + err.message);
-                }
-            }
-        };
-
-        // VISUALIZAR ANEXO
-        window.abrirAnexo = function(idDoc) {
-            const item = lancamentos.find(l => l.idDoc === idDoc);
-            if (!item || !item.anexoData) return;
-
-            try {
-                const arr = item.anexoData.split(',');
-                const mime = arr[0].match(/:(.*?);/)[1];
-                const bstr = atob(arr[1]);
-                let n = bstr.length;
-                const u8arr = new Uint8Array(n);
-                while (n--) {
-                    u8arr[n] = bstr.charCodeAt(n);
-                }
-                const blob = new Blob([u8arr], { type: mime });
-                const blobUrl = URL.createObjectURL(blob);
-
-                const newWindow = window.open(blobUrl, '_blank');
-                if (!newWindow) {
-                    window.location.href = blobUrl;
-                }
-            } catch (e) {
-                window.open(item.anexoData, '_blank');
-            }
-        };
-
-        // GERENCIAR CENTROS DE CUSTO
-        window.adicionarCentroCusto = async function() {
-            const novoCc = prompt("Digite o nome do novo Centro de Custo (Ex: Retiro 1, Lote Bezerros):");
-            if (novoCc && novoCc.trim() !== "") {
-                try {
-                    await addDoc(colCcRef, { nome: novoCc.trim() });
-                    alert("Centro de custo cadastrado!");
-                } catch (e) {
-                    alert("Erro ao cadastrar centro de custo.");
-                }
-            }
-        };
-
-        function atualizarSelectsCC() {
-            const selectForm = document.getElementById('centro-custo');
-            const selectFiltro = document.getElementById('filtro-cc');
-
-            const valorAnteriorForm = selectForm.value;
-            const valorAnteriorFiltro = selectFiltro.value;
-
-            selectForm.innerHTML = '';
-            selectFiltro.innerHTML = '<option value="">Todos os Centros de Custo</option>';
-
-            centrosCusto.forEach(cc => {
-                selectForm.innerHTML += `<option value="${cc}">${cc}</option>`;
-                selectFiltro.innerHTML += `<option value="${cc}">${cc}</option>`;
-            });
-
-            if (valorAnteriorForm) selectForm.value = valorAnteriorForm;
-            if (valorAnteriorFiltro) selectFiltro.value = valorAnteriorFiltro;
-        }
-
-        // FUNÇÃO DE ATUALIZAR TELA E FILTRAR
-        window.atualizarTela = function() {
-            const corpoTabela = document.getElementById('tabela-corpo');
-            if(!corpoTabela) return;
-            corpoTabela.innerHTML = '';
-
-            const filtroDataIni = document.getElementById('filtro-data-ini').value;
-            const filtroDataFim = document.getElementById('filtro-data-fim').value;
-            const filtroPagador = document.getElementById('filtro-pagador').value;
-            const filtroCategoria = document.getElementById('filtro-categoria').value;
-            const filtroCC = document.getElementById('filtro-cc').value;
-            const filtroStatus = document.getElementById('filtro-status').value;
-
-            let lancamentosFiltrados = lancamentos.filter(item => {
-                if (filtroDataIni && item.data < filtroDataIni) return false;
-                if (filtroDataFim && item.data > filtroDataFim) return false;
-                if (filtroPagador && item.socio !== filtroPagador) return false;
-                if (filtroCategoria && item.categoria !== filtroCategoria) return false;
-                if (filtroCC && (item.centroCusto || 'Geral') !== filtroCC) return false;
-                if (filtroStatus === 'pendentes' && !item.pendente) return false;
-                if (filtroStatus === 'concluidos' && item.pendente) return false;
-                return true;
-            });
-
-            let totalRonei = 0;
-            let totalDeivid = 0;
-
-            if (lancamentosFiltrados.length === 0) {
-                corpoTabela.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-slate-400">Nenhum lançamento encontrado com os filtros selecionados.</td></tr>';
-            }
-
-            let saldoAcumulado = 0;
-            if (saldoInicialObj.credor === 'Deivid') saldoAcumulado = saldoInicialObj.valor;
-            if (saldoInicialObj.credor === 'Ronei') saldoAcumulado = -saldoInicialObj.valor;
-
-            lancamentosFiltrados.forEach((item, index) => {
-                let aporteRonei = 0;
-                let aporteDeivid = 0;
-
-                if (item.categoria === 'Transferência entre Sócios') {
-                    if (item.socio === 'Ronei') {
-                        totalRonei += item.valor * 2;
-                    } else if (item.socio === 'Deivid') {
-                        totalDeivid += item.valor * 2;
-                    }
-                } else {
-                    aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
-                    aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
-                    totalRonei += aporteRonei;
-                    totalDeivid += aporteDeivid;
-                }
-
-                saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
-
-                let corTexto = saldoAcumulado > 0 ? 'text-emerald-700 font-bold' : (saldoAcumulado < 0 ? 'text-red-700 font-bold' : 'text-slate-700');
-                let sinalTexto = saldoAcumulado > 0 ? '🟢 + ' : (saldoAcumulado < 0 ? '🔴 - ' : '');
+                const partesData = mov.data.split('-');
+                const dataFormatada = `${partesData[2]}/${partesData[1]}/${partesData[0]}`;
 
                 const tr = document.createElement('tr');
-                tr.className = `border-b border-slate-200 hover:bg-slate-50 ${item.pendente ? 'bg-amber-50/60' : ''}`;
+                tr.className = "border-b border-slate-200 hover:bg-slate-50";
                 tr.innerHTML = `
-                    <td class="p-1.5 text-center font-mono text-slate-500">[${index + 1}]</td>
-                    <td class="p-1.5 text-center whitespace-nowrap">${formatarData(item.data)}</td>
-                    <td class="p-1.5 font-medium text-slate-800">
-                        <div class="flex items-center gap-1">
-                            ${item.pendente ? '<span class="bg-amber-200 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded">🟡 PENDENTE</span>' : ''}
-                            <span>${item.descricao}</span>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-normal">🏷️ ${item.centroCusto || 'Geral'} | ${item.categoria || 'Outros'}</div>
+                    <td class="p-2 text-center whitespace-nowrap text-xs">${dataFormatada}</td>
+                    <td class="p-2 text-center font-medium ${cor} text-xs">${icone} ${mov.tipo}</td>
+                    <td class="p-2 text-center font-bold text-slate-800 text-sm">${mov.quantidade}</td>
+                    <td class="p-2 text-center text-xs text-slate-600">${mov.categoria}</td>
+                    <td class="p-2 text-xs">
+                        <div class="text-slate-500">De: <span class="font-semibold text-slate-800">${mov.origem}</span></div>
+                        <div class="text-slate-500">Para: <span class="font-semibold text-slate-800">${mov.destino}</span></div>
+                        ${mov.observacao ? `<div class="text-[10px] text-slate-400 mt-1">Obs: ${mov.observacao}</div>` : ''}
                     </td>
-                    <td class="p-1.5 text-right font-mono whitespace-nowrap">${aporteRonei > 0 ? 'R$ ' + aporteRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'R$ 0,00'}</td>
-                    <td class="p-1.5 text-right font-mono whitespace-nowrap">${aporteDeivid > 0 ? 'R$ ' + aporteDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'R$ 0,00'}</td>
-                    <td class="p-1.5 text-right font-mono whitespace-nowrap ${corTexto}">${sinalTexto}R$ ${Math.abs(saldoAcumulado).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                    <td class="p-1.5 text-center no-print whitespace-nowrap">
-                        <div class="flex items-center justify-center gap-1.5">
-                            ${item.anexoData ? `<button onclick="abrirAnexo('${item.idDoc}')" title="Ver Anexo/PDF" class="text-blue-600 hover:text-blue-800 text-xs">📄</button>` : ''}
-                            <button onclick="prepararEdicao('${item.idDoc}')" title="Editar" class="text-amber-600 hover:text-amber-800 text-xs">✏️</button>
-                            <button onclick="apagarItem('${item.idDoc}')" title="Excluir" class="text-red-500 hover:text-red-700 text-xs">❌</button>
-                        </div>
+                    <td class="p-2 text-center">
+                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-500 hover:text-red-700 text-xs">❌</button>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
-
-            document.getElementById('resumo-ronei').innerText = `R$ ${totalRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-            document.getElementById('resumo-deivid').innerText = `R$ ${totalDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-            
-            const saldoIniElem = document.getElementById('resumo-saldo-inicial');
-            if (saldoInicialObj.valor > 0) {
-                saldoIniElem.innerText = `R$ ${saldoInicialObj.valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})} (${saldoInicialObj.credor} a receber)`;
-            } else {
-                saldoIniElem.innerText = 'R$ 0,00 (Zerado)';
-            }
-
-            const posicaoLiquida = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
-            const resumoPosicaoElem = document.getElementById('resumo-posicao');
-
-            if (posicaoLiquida > 0) {
-                resumoPosicaoElem.innerText = `DEIVID TEM A RECEBER R$ ${posicaoLiquida.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} DE RONEI`;
-                resumoPosicaoElem.className = 'p-2 text-right font-bold text-emerald-700';
-            } else if (posicaoLiquida < 0) {
-                resumoPosicaoElem.innerText = `DEIVID DEVE R$ ${Math.abs(posicaoLiquida).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} PARA RONEI`;
-                resumoPosicaoElem.className = 'p-2 text-right font-bold text-red-700';
-            } else {
-                resumoPosicaoElem.innerText = 'SALDOS ZERADOS / QUITADOS';
-                resumoPosicaoElem.className = 'p-2 text-right font-bold text-slate-700';
-            }
         };
-
-        function formatarData(dataStr) {
-            if(!dataStr) return '';
-            const partes = dataStr.split('-');
-            return `${partes[2]}/${partes[1]}/${partes[0]}`;
-        }
-
-        window.limparFiltros = function() {
-            document.getElementById('filtro-data-ini').value = '';
-            document.getElementById('filtro-data-fim').value = '';
-            document.getElementById('filtro-pagador').value = '';
-            document.getElementById('filtro-categoria').value = '';
-            document.getElementById('filtro-cc').value = '';
-            document.getElementById('filtro-status').value = '';
-            atualizarTela();
-        };
-
-        window.gerarPDF = function() { window.print(); };
 
         document.getElementById('data').valueAsDate = new Date();
-        document.getElementById('data-extrato').innerText = new Date().toLocaleDateString('pt-BR');
     </script>
-
-    <style>
-        body { font-family: system-ui, -apple-system, sans-serif; }
-        
-        @media print {
-            .no-print { display: none !important; }
-            html, body { 
-                background: #ffffff !important; 
-                padding: 0 !important; 
-                margin: 0 !important; 
-                width: 100% !important; 
-            }
-            .print-container { 
-                max-width: 100% !important; 
-                box-shadow: none !important; 
-                border: none !important; 
-                padding: 0 !important; 
-                margin: 0 !important; 
-            }
-            @page { 
-                size: A4 portrait; 
-                margin: 0.8cm 1cm 0.8cm 1cm; 
-            }
-            table.data-table { 
-                width: 100% !important; 
-                border-collapse: collapse !important; 
-                table-layout: auto !important; 
-            }
-            table.data-table th, table.data-table td { 
-                border: 1px solid #cbd5e1 !important; 
-                padding: 4px 6px !important; 
-                font-size: 7.5pt !important; 
-            }
-            table.data-table th {
-                background-color: #065f46 !important;
-                color: #ffffff !important;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-        }
-    </style>
 </head>
 <body class="bg-slate-100 min-h-screen p-2 md:p-6">
 
-    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden p-3 md:p-6 print-container">
+    <div class="max-w-5xl mx-auto space-y-4">
         
-        <!-- CABEÇALHO DA PÁGINA -->
-        <div class="border-b-2 border-emerald-800 pb-2 mb-3 flex justify-between items-end">
+        <!-- CABEÇALHO -->
+        <div class="bg-blue-900 rounded-2xl shadow-lg p-4 md:p-6 text-white flex justify-between items-center">
             <div>
-                <h1 class="text-lg md:text-2xl font-bold text-emerald-800 uppercase tracking-tight">EXTRATO DE CONCILIAÇÃO E ACERTO DE SÓCIOS</h1>
-                <p class="text-xs font-bold text-slate-600">SOCIEDADE DR</p>
+                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-tight">🐂 Controle de Rebanho</h1>
+                <p class="text-blue-200 text-xs md:text-sm">Gestão de Lotes, Pastos e Transferências - Sociedade DR</p>
             </div>
-            <div class="text-right text-[11px] text-slate-600 leading-tight">
-                <p><b>Operador:</b> Deivid | <b>Sócio:</b> Ronei</p>
-                <p><b>Emissão:</b> <span id="data-extrato">--/--/----</span></p>
+            <div class="text-right">
+                <p class="text-[10px] text-blue-300 uppercase tracking-widest mb-1">Total na Sociedade</p>
+                <p class="text-3xl md:text-4xl font-black leading-none"><span id="total-cabecas">0</span> <span class="text-sm font-normal text-blue-300">cabeças</span></p>
             </div>
         </div>
 
-        <!-- FORMULÁRIO DE LANÇAMENTO -->
-        <div class="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-200 no-print">
+        <!-- DASHBOARD DE SALDOS POR LOCAL -->
+        <div class="bg-white rounded-xl shadow p-4">
             <div class="flex justify-between items-center mb-3">
-                <h2 class="text-sm font-bold text-slate-700">➕ Lançamento / Edição</h2>
-                <div class="flex gap-2">
-                    <button type="button" onclick="configurarSaldoInicial()" class="text-xs font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-lg border border-amber-300">
-                        ⚙️ Saldo Inicial
-                    </button>
-                    <button type="button" onclick="adicionarCentroCusto()" class="text-xs font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg border border-emerald-300">
-                        ⚙️ + Centro de Custo
-                    </button>
-                </div>
+                <h2 class="text-sm font-bold text-slate-700">📍 Onde o gado está agora? (Saldo por Pasto)</h2>
+                <button onclick="adicionarLocal()" class="text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300 px-3 py-1.5 rounded-lg hover:bg-blue-200 transition">
+                    + Criar Fazenda/Pasto
+                </button>
             </div>
+            <div id="grid-saldos-locais" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <p class="text-xs text-slate-400">Carregando saldos...</p>
+            </div>
+        </div>
 
-            <form id="form-lancamento" class="space-y-3">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div class="md:col-span-2">
-                        <label class="block text-xs font-medium text-slate-600">Descrição / Fornecedor</label>
-                        <input type="text" id="descricao" placeholder="Ex: Arrendamento Dinei, Quirela CVALE" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
-                    </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            <!-- FORMULÁRIO DE NOVA MOVIMENTAÇÃO -->
+            <div class="md:col-span-1 bg-white rounded-xl shadow p-4 border-t-4 border-blue-600">
+                <h2 class="text-sm font-bold text-slate-700 mb-4">📝 Nova Movimentação</h2>
+                
+                <form id="form-movimentacao" class="space-y-3">
                     <div>
-                        <label class="block text-xs font-medium text-slate-600">Centro de Custo</label>
-                        <select id="centro-custo" class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300 bg-white">
-                            <!-- Preenchido via JS -->
+                        <label class="block text-xs font-medium text-slate-600">O que aconteceu?</label>
+                        <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-300 rounded text-sm bg-slate-50 font-semibold text-blue-900">
+                            <option value="Compra">🟢 Compra (Entrada de Lote)</option>
+                            <option value="Transferência">🔵 Transferência entre Pastos</option>
+                            <option value="Venda">🔴 Venda (Saída)</option>
+                            <option value="Abate">🔴 Abate</option>
+                            <option value="Nascimento">🟢 Nascimento</option>
+                            <option value="Morte">⚫ Morte</option>
                         </select>
                     </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600">Data</label>
+                            <input type="date" id="data" required class="w-full mt-1 p-2 border border-slate-300 rounded text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-600">Qtd (Cabeças)</label>
+                            <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-300 rounded text-sm" placeholder="Ex: 45">
+                        </div>
+                    </div>
+
                     <div>
                         <label class="block text-xs font-medium text-slate-600">Categoria</label>
-                        <select id="categoria" class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300 bg-white">
-                            <option value="Arrendamento">Arrendamento</option>
-                            <option value="Nutrição / Ração">Nutrição / Ração</option>
-                            <option value="Mão de Obra">Mão de Obra</option>
-                            <option value="Infraestrutura">Infraestrutura</option>
-                            <option value="Frete / Logística">Frete / Logística</option>
-                            <option value="Compra de Gado">Compra de Gado</option>
-                            <option value="Transferência entre Sócios">💸 Transferência entre Sócios</option>
-                            <option value="Impostos / Taxas">Impostos / Taxas</option>
-                            <option value="Outros">Outros</option>
+                        <select id="categoria" class="w-full mt-1 p-2 border border-slate-300 rounded text-sm bg-white">
+                            <option value="Misto (Várias)">Misto (Várias categorias)</option>
+                            <option value="Bezerros (M)">Bezerros (M)</option>
+                            <option value="Bezerras (F)">Bezerras (F)</option>
+                            <option value="Garrotes">Garrotes</option>
+                            <option value="Novilhas">Novilhas</option>
+                            <option value="Boi Magro">Boi Magro</option>
+                            <option value="Boi Gordo">Boi Gordo</option>
+                            <option value="Vacas">Vacas</option>
+                            <option value="Touros">Touros</option>
                         </select>
                     </div>
-                </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">Valor (R$)</label>
-                        <input type="number" step="0.01" id="valor" placeholder="0,00" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
+                    <div id="div-origem" class="hidden bg-slate-50 p-2 rounded border border-slate-200">
+                        <label class="block text-[10px] font-bold text-red-700 uppercase">Saiu de onde? (Origem)</label>
+                        <select id="origem" class="w-full mt-1 p-1.5 border border-slate-300 rounded text-xs bg-white"></select>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">Data do Pagamento</label>
-                        <input type="date" id="data" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-emerald-800">Quem Pagou / Enviou?</label>
-                        <select id="socio-pagador" class="w-full mt-1 p-2 border border-emerald-600 rounded-lg text-sm bg-emerald-50 font-bold text-slate-800">
-                            <option value="Deivid">Deivid</option>
-                            <option value="Ronei">Ronei</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">Anexo (PDF ou Foto)</label>
-                        <input type="file" id="anexo-pdf" accept="application/pdf,image/*" class="w-full mt-1 text-xs border border-slate-300 rounded-lg p-1.5 bg-white">
-                        <button type="button" onclick="lerComprovanteIA()" class="mt-1 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded-lg text-xs transition shadow flex items-center justify-center gap-1">
-                            ✨ Ler nota com Mindee IA
-                        </button>
-                        <p id="status-ocr" class="hidden"></p>
-                    </div>
-                </div>
 
-                <div class="flex justify-between items-center bg-slate-100 p-2 rounded-lg border border-slate-200">
-                    <label class="flex items-center gap-2 cursor-pointer text-xs font-semibold text-amber-800">
-                        <input type="checkbox" id="is-pendente" class="rounded text-amber-600 focus:ring-amber-500">
-                        🟡 Salvar como Pendente / Rascunho (Finalizar depois)
-                    </label>
-
-                    <div id="container-remover-anexo" class="hidden">
-                        <button type="button" onclick="removerAnexoExistente()" class="text-xs text-red-600 hover:underline font-semibold">
-                            🗑️ Remover Anexo Atual
-                        </button>
+                    <div id="div-destino" class="bg-blue-50 p-2 rounded border border-blue-200">
+                        <label class="block text-[10px] font-bold text-blue-700 uppercase">Foi para onde? (Destino)</label>
+                        <select id="destino" class="w-full mt-1 p-1.5 border border-slate-300 rounded text-xs bg-white"></select>
                     </div>
-                </div>
 
-                <div class="flex gap-2">
-                    <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow">
-                        ☁️ Salvar no Banco de Dados (Nuvem)
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600">Observação / Fornecedor / Identificação do Lote</label>
+                        <input type="text" id="observacao" class="w-full mt-1 p-2 border border-slate-300 rounded text-xs" placeholder="Ex: Lote comprado do Sr. João">
+                    </div>
+
+                    <button type="submit" class="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow mt-2">
+                        Salvar Movimentação
                     </button>
-                    <button type="button" id="btn-cancelar-edicao" onclick="cancelarEdicao()" class="hidden bg-slate-400 hover:bg-slate-500 text-white font-bold px-4 py-2.5 rounded-lg text-sm">
-                        Cancelar
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <!-- FILTROS DE CONSULTA -->
-        <div class="mb-4 p-3 bg-slate-100 rounded-xl border border-slate-200 no-print">
-            <div class="flex justify-between items-center mb-2">
-                <span class="text-xs font-bold text-slate-700">🔍 Filtros de Consulta</span>
-                <button onclick="limparFiltros()" class="text-[11px] text-emerald-700 font-semibold hover:underline">Limpar Filtros</button>
+                </form>
             </div>
-            
-            <div class="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
-                <div>
-                    <label class="block text-[10px] text-slate-500">Data Inicial</label>
-                    <input type="date" id="filtro-data-ini" onchange="atualizarTela()" oninput="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-500">Data Final</label>
-                    <input type="date" id="filtro-data-fim" onchange="atualizarTela()" oninput="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-500">Quem Pagou?</label>
-                    <select id="filtro-pagador" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
-                        <option value="">Todos</option>
-                        <option value="Deivid">Deivid</option>
-                        <option value="Ronei">Ronei</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-500">Centro de Custo</label>
-                    <select id="filtro-cc" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
+
+            <!-- HISTÓRICO E TABELA -->
+            <div class="md:col-span-2 bg-white rounded-xl shadow p-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-sm font-bold text-slate-700">🕰️ Histórico de Movimentações</h2>
+                    <select id="filtro-local" onchange="atualizarTabela()" class="p-1 text-xs border border-slate-300 rounded">
                         <!-- Preenchido via JS -->
                     </select>
                 </div>
-                <div>
-                    <label class="block text-[10px] text-slate-500">Categoria</label>
-                    <select id="filtro-categoria" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
-                        <option value="">Todas</option>
-                        <option value="Arrendamento">Arrendamento</option>
-                        <option value="Nutrição / Ração">Nutrição / Ração</option>
-                        <option value="Mão de Obra">Mão de Obra</option>
-                        <option value="Infraestrutura">Infraestrutura</option>
-                        <option value="Frete / Logística">Frete / Logística</option>
-                        <option value="Compra de Gado">Compra de Gado</option>
-                        <option value="Transferência entre Sócios">Transferência entre Sócios</option>
-                        <option value="Impostos / Taxas">Impostos / Taxas</option>
-                        <option value="Outros">Outros</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-500">Status</label>
-                    <select id="filtro-status" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
-                        <option value="">Todos</option>
-                        <option value="concluidos">Concluídos</option>
-                        <option value="pendentes">🟡 Pendentes</option>
-                    </select>
+
+                <div class="overflow-x-auto h-[450px] overflow-y-auto border border-slate-200 rounded">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-slate-100 sticky top-0 shadow-sm">
+                            <tr>
+                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Data</th>
+                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Tipo</th>
+                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Qtd</th>
+                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Categoria</th>
+                                <th class="p-2 text-xs font-bold text-slate-600">Trajeto / Observação</th>
+                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabela-historico">
+                            <tr><td colspan="6" class="text-center py-4 text-slate-400 text-xs">Carregando histórico...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
-        </div>
 
-        <!-- CONTROLES -->
-        <div class="flex justify-between items-center mb-3 no-print">
-            <h2 class="text-sm font-bold text-slate-700">📋 Extrato em Nuvem</h2>
-            <div class="flex gap-2">
-                <button onclick="exportarExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow">
-                    📊 Exportar para Excel (.xlsx)
-                </button>
-                <button onclick="gerarPDF()" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow">
-                    🖨️ Imprimir / Gerar PDF
-                </button>
-            </div>
         </div>
-
-        <!-- TABELA DE LANÇAMENTOS -->
-        <div class="overflow-x-auto mb-4">
-            <table class="data-table w-full text-xs border-collapse border border-slate-300">
-                <thead>
-                    <tr class="bg-emerald-800 text-white text-center font-bold">
-                        <th class="p-1.5 border border-emerald-800 w-[5%]">Nº</th>
-                        <th class="p-1.5 border border-emerald-800 w-[12%]">Data</th>
-                        <th class="p-1.5 border border-emerald-800 text-left w-[33%]">Descrição / Centro de Custo</th>
-                        <th class="p-1.5 border border-emerald-800 text-right w-[14%]">Ronei (Bolso)</th>
-                        <th class="p-1.5 border border-emerald-800 text-right w-[14%]">Deivid (Bolso)</th>
-                        <th class="p-1.5 border border-emerald-800 text-right w-[15%]">Saldo Acumulado</th>
-                        <th class="p-1.5 border border-emerald-800 w-[7%] no-print">Ações</th>
-                    </tr>
-                </thead>
-                <tbody id="tabela-corpo">
-                    <tr><td colspan="7" class="text-center py-4 text-slate-400">Carregando dados...</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- RESUMO CONSOLIDADO -->
-        <div class="flex justify-end mt-4">
-            <table class="w-full md:w-3/5 border-1.5 border-slate-900 text-xs rounded overflow-hidden">
-                <thead>
-                    <tr class="bg-slate-800 text-white font-bold uppercase text-center">
-                        <th colspan="2" class="p-2">Resumo Consolidado do Acerto</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-200">
-                    <tr>
-                        <td class="p-2">Saldo Inicial da Sociedade:</td>
-                        <td class="p-2 text-right font-mono font-bold text-slate-700" id="resumo-saldo-inicial">R$ 0,00</td>
-                    </tr>
-                    <tr>
-                        <td class="p-2">Total Aportado por <b>RONEI</b>:</td>
-                        <td class="p-2 text-right font-mono font-bold" id="resumo-ronei">R$ 0,00</td>
-                    </tr>
-                    <tr>
-                        <td class="p-2">Total Aportado por <b>DEIVID</b>:</td>
-                        <td class="p-2 text-right font-mono font-bold" id="resumo-deivid">R$ 0,00</td>
-                    </tr>
-                    <tr class="bg-slate-100 font-bold">
-                        <td class="p-2">POSIÇÃO FINAL ATUALIZADA:</td>
-                        <td class="p-2 text-right font-bold text-emerald-700" id="resumo-posicao">SALDOS ZERADOS</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
     </div>
+
 </body>
 </html>
