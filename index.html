@@ -191,7 +191,6 @@
             let totalFemeas = 0;
             let totalMachos = 0;
 
-            // Indicadores financeiros
             let custoAquisicao = 0;
             let receitaTotal = 0;
 
@@ -239,9 +238,9 @@
                     totalGeral += qtd;
 
                     const catLower = cat.toLowerCase();
-                    if (catLower.includes('fêmea') || catLower.includes('vaca') || catLower.includes('novilha') || catLower.includes('matriz')) {
+                    if (catLower.includes('fêmea') || catLower.includes('bezerra') || catLower.includes('vaca') || catLower.includes('novilha')) {
                         totalFemeas += qtd;
-                    } else if (catLower.includes('macho') || catLower.includes('boi') || catLower.includes('touro') || catLower.includes('garrote') || catLower.includes('rufião')) {
+                    } else if (catLower.includes('macho') || catLower.includes('bezerro') || catLower.includes('boi') || catLower.includes('touro') || catLower.includes('garrote')) {
                         totalMachos += qtd;
                     }
 
@@ -272,7 +271,6 @@
             document.getElementById('total-femeas').innerText = totalFemeas;
             document.getElementById('total-machos').innerText = totalMachos;
             
-            // Atualizar Tabela de Custos Financeiros
             document.getElementById('val-custo-aquisicao').innerText = formatarMoeda(custoAquisicao);
             document.getElementById('val-receita-total').innerText = formatarMoeda(receitaTotal);
 
@@ -346,9 +344,7 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            <!-- COLUNA ESQUERDA: RELATÓRIOS -->
             <div class="space-y-6">
-                <!-- QUADRO DE ESTOQUE FÍSICO -->
                 <div>
                     <div class="flex justify-between items-end mb-2">
                         <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
@@ -383,7 +379,6 @@
                         </table>
                     </div>
 
-                    <!-- Resumo Sexo -->
                     <div class="w-full md:w-3/5 mt-4">
                         <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
                             <tbody>
@@ -400,7 +395,6 @@
                     </div>
                 </div>
 
-                <!-- QUADRO DE INDICADORES FINANCEIROS -->
                 <div>
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-2">Relatório Financeiro do Rebanho</h2>
                     <div class="rounded border border-slate-300 overflow-hidden shadow-sm bg-white">
@@ -418,12 +412,9 @@
                         </table>
                     </div>
                 </div>
-
             </div>
 
-            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO -->
             <div class="space-y-6">
-                
                 <div class="bg-white rounded border border-slate-300 shadow p-4">
                     <h2 class="text-sm font-bold text-slate-800 uppercase border-b border-slate-200 pb-2 mb-3">Registrar Movimentação</h2>
                     
@@ -444,15 +435,15 @@
                             <div class="col-span-2">
                                 <label class="block text-xs font-bold text-slate-600 uppercase">Categoria</label>
                                 <select id="categoria" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white">
-                                    <option value="Bezerro Macho">Bezerro Macho</option>
-                                    <option value="Bezerro Fêmea">Bezerro Fêmea</option>
-                                    <option value="Macho 13 a 24 Meses">Macho 13 a 24 Meses</option>
-                                    <option value="Fêmea 13 a 24 Meses">Fêmea 13 a 24 Meses</option>
-                                    <option value="Boi Magro (> 24m)">Boi Magro (> 24m)</option>
-                                    <option value="Boi Gordo (> 24m)">Boi Gordo (> 24m)</option>
-                                    <option value="Novilha">Novilha</option>
-                                    <option value="Vaca Matriz">Vaca Matriz</option>
-                                    <option value="Touro / Rufião">Touro / Rufião</option>
+                                    <option value="Bezerros (M)">Bezerros (M)</option>
+                                    <option value="Bezerras (F)">Bezerras (F)</option>
+                                    <option value="Garrotes (M)">Garrotes (M)</option>
+                                    <option value="Novilhas (F)">Novilhas (F)</option>
+                                    <option value="Boi Magro">Boi Magro</option>
+                                    <option value="Boi Gordo">Boi Gordo</option>
+                                    <option value="Vacas">Vacas</option>
+                                    <option value="Touros">Touros</option>
+                                    <option value="Misto / Lote">Misto / Lote</option>
                                 </select>
                             </div>
                             
@@ -477,7 +468,6 @@
                             </div>
                         </div>
 
-                        <!-- CAMPOS FINANCEIROS CONDICIONAIS -->
                         <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-200 mt-3">
                             <div id="div-fornecedor" class="col-span-2">
                                 <label class="block text-xs font-bold text-slate-600 uppercase">Provedor / Fornecedor / Comprador</label>
@@ -485,7 +475,7 @@
                             </div>
                             <div id="div-valor" class="col-span-2">
                                 <label id="label-valor" class="block text-xs font-bold text-blue-700 uppercase">Custo / Receita Total (R$)</label>
-                                <input type="number" step="0.01" id="valor-financeiro" class="w-full mt-1 p-2 border border-blue-400 rounded text-sm font-bold bg-blue-50" placeholder="0.00">
+                                <input type="number" step="0.01" id="valor-financeiro" class="w-full mt-1 p-2 border border-blue-400 rounded text-sm font-bold bg-blue-50">
                             </div>
                         </div>
 
@@ -505,10 +495,8 @@
                         </table>
                     </div>
                 </div>
-
             </div>
         </div>
     </div>
-
 </body>
 </html>
