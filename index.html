@@ -3,19 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sociedade DR - Gestão Financeira</title>
+    <title>Acerto DR - Gestão Financeira Pecuária</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <!-- Biblioteca para Gerar Excel (.xlsx) -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <!-- SDKs do Firebase v10/v12 via CDN -->
+    <!-- SDKs do Firebase v10 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // CHAVES REAIS DO TEU PROJETO FIREBASE (SOCIEDADE DR)
+        // CHAVE DO FIREBASE (BANCO DE DADOS)
         const firebaseConfig = {
             apiKey: "AIzaSyDgnDHu-dHCo5oZRo113M5jQ1kxwX9_1uE",
             authDomain: "sociedade-dr.firebaseapp.com",
@@ -26,14 +25,39 @@
             measurementId: "G-18PGSQ0RKF"
         };
 
-        // Inicializa o Firebase
+        // CHAVE MINDEE API (OCR DE NOTAS FISCAIS)
+        const mindeeApiKey = "md_kn0mRSDwl2MHTU_BVLd5crY2Z7DEPKLF6A95He_AizU";
+
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const colRef = collection(db, "lancamentos_dr");
+        const colCcRef = collection(db, "centros_custo_dr");
+        const configDocRef = doc(db, "configuracoes_dr", "saldo_inicial");
 
         let lancamentos = [];
+        let centrosCusto = ["Geral", "Arrendamento", "Nutrição / Ração", "Mão de Obra", "Infraestrutura", "Frete", "Compra de Gado", "Outros"];
+        let editandoId = null;
+        let saldoInicialObj = { valor: 0, credor: "Nenhum" };
 
-        // ESCUTA EM TEMPO REAL OS DADOS DO FIRESTORE (SINCRONIZAÇÃO AUTOMÁTICA)
+        // CARREGAR SALDO INICIAL
+        onSnapshot(configDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                saldoInicialObj = docSnap.data();
+            }
+            atualizarTela();
+        });
+
+        // CARREGAR CENTROS DE CUSTO
+        onSnapshot(colCcRef, (snapshot) => {
+            const ccNuvem = [];
+            snapshot.forEach(d => ccNuvem.push(d.data().nome));
+            if (ccNuvem.length > 0) {
+                centrosCusto = Array.from(new Set([...centrosCusto, ...ccNuvem]));
+            }
+            atualizarSelectsCC();
+        });
+
+        // ESCUTAR LANÇAMENTOS EM TEMPO REAL
         const q = query(colRef, orderBy("data", "asc"));
         onSnapshot(q, (snapshot) => {
             lancamentos = [];
@@ -44,76 +68,161 @@
                 });
             });
             atualizarTela();
-        }, (error) => {
-            console.error("Erro no Firestore: ", error);
         });
 
-        // SALVAR NOVO LANÇAMENTO
+        // CONVERTER ARQUIVO PARA BASE64 (Para salvar no Firebase)
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                if (!file) resolve(null);
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        // LER NOTA FISCAL COM API MINDEE
+        window.lerComprovanteIA = async function() {
+            const fileInput = document.getElementById('anexo-pdf');
+            if (fileInput.files.length === 0) {
+                alert("Primeiro, selecione uma foto ou PDF no campo de anexo!");
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const statusElem = document.getElementById('status-ocr');
+            statusElem.innerText = "⏳ Lendo a nota com Mindee IA... Aguarde.";
+            statusElem.className = "text-[10px] font-bold text-amber-600 mt-1 block";
+
+            const formData = new FormData();
+            formData.append("document", file);
+
+            try {
+                const response = await fetch("https://api.mindee.net/v1/products/mindee/invoices/v4/predict", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Token ${mindeeApiKey}`
+                    },
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error("Erro na comunicação com a API da Mindee.");
+                }
+
+                const jsonResponse = await response.json();
+                const prediction = jsonResponse.document.inference.prediction;
+
+                const fornecedor = prediction.supplier_name?.value || "";
+                const valorTotal = prediction.total_amount?.value || "";
+                const dataEmissao = prediction.date?.value || "";
+
+                if (fornecedor) document.getElementById('descricao').value = fornecedor;
+                if (valorTotal) document.getElementById('valor').value = valorTotal;
+                if (dataEmissao) document.getElementById('data').value = dataEmissao;
+
+                statusElem.innerText = "✅ Dados extraídos com sucesso! Selecione a Categoria e quem pagou.";
+                statusElem.className = "text-[10px] font-bold text-emerald-700 mt-1 block";
+            } catch (err) {
+                console.error(err);
+                statusElem.innerText = "❌ Falha ao ler a nota. Verifique se a foto está nítida ou digite manualmente.";
+                statusElem.className = "text-[10px] font-bold text-red-600 mt-1 block";
+            }
+        };
+
+        // SALVAR OU EDITAR LANÇAMENTO
         document.getElementById('form-lancamento').addEventListener('submit', async function(e) {
             e.preventDefault();
 
             const descricao = document.getElementById('descricao').value;
-            const valor = parseFloat(document.getElementById('valor').value);
+            const valor = parseFloat(document.getElementById('valor').value) || 0;
             const data = document.getElementById('data').value;
             const categoria = document.getElementById('categoria').value;
+            const centroCusto = document.getElementById('centro-custo').value;
             const socio = document.getElementById('socio-pagador').value;
+            const isPendente = document.getElementById('is-pendente').checked;
+            const fileInput = document.getElementById('anexo-pdf');
+
+            let anexoData = null;
+            if (fileInput.files.length > 0) {
+                anexoData = await fileToBase64(fileInput.files[0]);
+            }
 
             try {
-                await addDoc(colRef, {
-                    descricao,
-                    valor,
-                    data,
-                    categoria,
-                    socio,
-                    criadoEm: new Date().toISOString()
-                });
+                if (editandoId) {
+                    const updateObj = { 
+                        descricao, 
+                        valor, 
+                        data, 
+                        categoria, 
+                        centroCusto, 
+                        socio,
+                        pendente: isPendente
+                    };
+                    
+                    if (anexoData) {
+                        updateObj.anexoData = anexoData;
+                    }
 
-                document.getElementById('descricao').value = '';
-                document.getElementById('valor').value = '';
+                    await updateDoc(doc(db, "lancamentos_dr", editandoId), updateObj);
+                    cancelarEdicao();
+                } else {
+                    await addDoc(colRef, {
+                        descricao,
+                        valor,
+                        data,
+                        categoria,
+                        centroCusto: centroCusto || "Geral",
+                        socio,
+                        pendente: isPendente,
+                        anexoData: anexoData || null,
+                        criadoEm: new Date().toISOString()
+                    });
+                    limparFormulario();
+                }
             } catch (err) {
-                alert("Erro ao salvar no banco de dados em nuvem: " + err.message + "\n\nVerifique se ativou o Firestore Database em 'Modo de Teste' no console do Firebase!");
+                alert("Erro ao salvar no banco de dados: " + err.message);
             }
         });
-
-        // EXCLUIR LANÇAMENTO
-        window.apagarItem = async function(idDoc) {
-            if(confirm("Deseja excluir este lançamento permanentemente da nuvem?")) {
-                try {
-                    await deleteDoc(doc(db, "lancamentos_dr", idDoc));
-                } catch(err) {
-                    alert("Erro ao excluir: " + err.message);
-                }
-            }
-        };
 
         // EXPORTAR PARA EXCEL (.XLSX)
         window.exportarExcel = function() {
             if (lancamentos.length === 0) {
-                alert("Não há lançamentos registrados para exportar.");
+                alert("Não há lançamentos para exportar.");
                 return;
             }
 
             let totalRonei = 0;
             let totalDeivid = 0;
+            let saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0));
 
             const dadosExcel = lancamentos.map((item, index) => {
-                let aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
-                let aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
+                let aporteRonei = 0;
+                let aporteDeivid = 0;
 
-                totalRonei += aporteRonei;
-                totalDeivid += aporteDeivid;
+                if (item.categoria === 'Transferência entre Sócios') {
+                    if (item.socio === 'Ronei') totalRonei += item.valor * 2;
+                    else if (item.socio === 'Deivid') totalDeivid += item.valor * 2;
+                } else {
+                    aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
+                    aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
+                    totalRonei += aporteRonei;
+                    totalDeivid += aporteDeivid;
+                }
 
-                let saldoMomento = (totalDeivid - totalRonei) / 2.0;
+                saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
 
                 return {
-                    "Lançamento": index + 1,
+                    "Nº": index + 1,
                     "Data": formatarData(item.data),
                     "Descrição": item.descricao,
-                    "Categoria": item.categoria,
+                    "Centro de Custo": item.centroCusto || 'Geral',
+                    "Categoria": item.categoria || 'Outros',
                     "Sócio Pagador": item.socio,
-                    "Ronei (Bolso)": aporteRonei,
-                    "Deivid (Bolso)": aporteDeivid,
-                    "Saldo Acumulado Deivid (R$)": saldoMomento
+                    "Status": item.pendente ? "🟡 Pendente" : "Concluído",
+                    "Ronei (R$)": aporteRonei,
+                    "Deivid (R$)": aporteDeivid,
+                    "Saldo Deivid (R$)": saldoAcumulado
                 };
             });
 
@@ -125,88 +234,265 @@
             XLSX.writeFile(workbook, `Extrato_Sociedade_DR_${dataAtual}.xlsx`);
         };
 
-        function formatarData(dataStr) {
-            if(!dataStr) return '';
-            const partes = dataStr.split('-');
-            return `${partes[2]}/${partes[1]}/${partes[0]}`;
+        // DEFINIR SALDO INICIAL
+        window.configurarSaldoInicial = async function() {
+            const valStr = prompt("Digite o valor do Saldo Inicial acumulado (R$):", saldoInicialObj.valor || "0");
+            if (valStr === null) return;
+            const val = parseFloat(valStr.replace(',', '.')) || 0;
+
+            let credor = "Nenhum";
+            if (val > 0) {
+                const opcao = prompt("Quem tem a RECEBER esse valor inicial?\nDigite 1 para DEIVID\nDigite 2 para RONEI", "1");
+                if (opcao === "1") credor = "Deivid";
+                if (opcao === "2") credor = "Ronei";
+            }
+
+            try {
+                await setDoc(configDocRef, { valor: val, credor: credor });
+                alert("Saldo inicial atualizado com sucesso!");
+            } catch(e) {
+                alert("Erro ao salvar saldo inicial.");
+            }
+        };
+
+        // PREPARAR EDICAO
+        window.prepararEdicao = function(idDoc) {
+            const item = lancamentos.find(l => l.idDoc === idDoc);
+            if (!item) return;
+
+            editandoId = idDoc;
+            document.getElementById('descricao').value = item.descricao;
+            document.getElementById('valor').value = item.valor;
+            document.getElementById('data').value = item.data;
+            document.getElementById('categoria').value = item.categoria || 'Outros';
+            document.getElementById('centro-custo').value = item.centroCusto || 'Geral';
+            document.getElementById('socio-pagador').value = item.socio;
+            document.getElementById('is-pendente').checked = !!item.pendente;
+            document.getElementById('status-ocr').innerText = '';
+
+            if (item.anexoData) {
+                document.getElementById('container-remover-anexo').classList.remove('hidden');
+            } else {
+                document.getElementById('container-remover-anexo').classList.add('hidden');
+            }
+
+            document.getElementById('btn-submit').innerText = "💾 Atualizar Lançamento";
+            document.getElementById('btn-submit').className = "w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow";
+            document.getElementById('btn-cancelar-edicao').classList.remove('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        window.removerAnexoExistente = async function() {
+            if (!editandoId) return;
+            if (confirm("Deseja remover o anexo/comprovante deste lançamento?")) {
+                try {
+                    await updateDoc(doc(db, "lancamentos_dr", editandoId), { anexoData: null });
+                    document.getElementById('container-remover-anexo').classList.add('hidden');
+                    alert("Anexo removido com sucesso!");
+                } catch(e) {
+                    alert("Erro ao remover anexo.");
+                }
+            }
+        };
+
+        window.cancelarEdicao = function() {
+            editandoId = null;
+            limparFormulario();
+            document.getElementById('btn-submit').innerText = "☁️ Salvar no Banco de Dados (Nuvem)";
+            document.getElementById('btn-submit').className = "w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow";
+            document.getElementById('btn-cancelar-edicao').classList.add('hidden');
+            document.getElementById('container-remover-anexo').classList.add('hidden');
+        };
+
+        function limparFormulario() {
+            document.getElementById('descricao').value = '';
+            document.getElementById('valor').value = '';
+            document.getElementById('anexo-pdf').value = '';
+            document.getElementById('is-pendente').checked = false;
+            document.getElementById('status-ocr').innerText = '';
         }
 
-        function atualizarTela() {
+        // EXCLUIR ITEM
+        window.apagarItem = async function(idDoc) {
+            if(confirm("Deseja excluir este lançamento permanentemente?")) {
+                try {
+                    await deleteDoc(doc(db, "lancamentos_dr", idDoc));
+                } catch(err) {
+                    alert("Erro ao excluir: " + err.message);
+                }
+            }
+        };
+
+        // VISUALIZAR ANEXO
+        window.abrirAnexo = function(idDoc) {
+            const item = lancamentos.find(l => l.idDoc === idDoc);
+            if (!item || !item.anexoData) return;
+
+            try {
+                const arr = item.anexoData.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while (n--) {
+                    u8arr[n] = bstr.charCodeAt(n);
+                }
+                const blob = new Blob([u8arr], { type: mime });
+                const blobUrl = URL.createObjectURL(blob);
+
+                const newWindow = window.open(blobUrl, '_blank');
+                if (!newWindow) {
+                    window.location.href = blobUrl;
+                }
+            } catch (e) {
+                window.open(item.anexoData, '_blank');
+            }
+        };
+
+        // GERENCIAR CENTROS DE CUSTO
+        window.adicionarCentroCusto = async function() {
+            const novoCc = prompt("Digite o nome do novo Centro de Custo (Ex: Retiro 1, Lote Bezerros):");
+            if (novoCc && novoCc.trim() !== "") {
+                try {
+                    await addDoc(colCcRef, { nome: novoCc.trim() });
+                    alert("Centro de custo cadastrado!");
+                } catch (e) {
+                    alert("Erro ao cadastrar centro de custo.");
+                }
+            }
+        };
+
+        function atualizarSelectsCC() {
+            const selectForm = document.getElementById('centro-custo');
+            const selectFiltro = document.getElementById('filtro-cc');
+
+            const valorAnteriorForm = selectForm.value;
+            const valorAnteriorFiltro = selectFiltro.value;
+
+            selectForm.innerHTML = '';
+            selectFiltro.innerHTML = '<option value="">Todos os Centros de Custo</option>';
+
+            centrosCusto.forEach(cc => {
+                selectForm.innerHTML += `<option value="${cc}">${cc}</option>`;
+                selectFiltro.innerHTML += `<option value="${cc}">${cc}</option>`;
+            });
+
+            if (valorAnteriorForm) selectForm.value = valorAnteriorForm;
+            if (valorAnteriorFiltro) selectFiltro.value = valorAnteriorFiltro;
+        }
+
+        // FUNÇÃO DE ATUALIZAR TELA E FILTRAR
+        window.atualizarTela = function() {
             const corpoTabela = document.getElementById('tabela-corpo');
+            if(!corpoTabela) return;
             corpoTabela.innerHTML = '';
 
             const filtroDataIni = document.getElementById('filtro-data-ini').value;
             const filtroDataFim = document.getElementById('filtro-data-fim').value;
             const filtroPagador = document.getElementById('filtro-pagador').value;
             const filtroCategoria = document.getElementById('filtro-categoria').value;
-            const filtroValorMin = parseFloat(document.getElementById('filtro-valor-min').value) || 0;
+            const filtroCC = document.getElementById('filtro-cc').value;
+            const filtroStatus = document.getElementById('filtro-status').value;
 
             let lancamentosFiltrados = lancamentos.filter(item => {
                 if (filtroDataIni && item.data < filtroDataIni) return false;
                 if (filtroDataFim && item.data > filtroDataFim) return false;
                 if (filtroPagador && item.socio !== filtroPagador) return false;
                 if (filtroCategoria && item.categoria !== filtroCategoria) return false;
-                if (filtroValorMin > 0 && item.valor < filtroValorMin) return false;
+                if (filtroCC && (item.centroCusto || 'Geral') !== filtroCC) return false;
+                if (filtroStatus === 'pendentes' && !item.pendente) return false;
+                if (filtroStatus === 'concluidos' && item.pendente) return false;
                 return true;
             });
 
             let totalRonei = 0;
             let totalDeivid = 0;
-            let saldoAcumulado = 0;
 
             if (lancamentosFiltrados.length === 0) {
-                corpoTabela.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-slate-400">Nenhum lançamento encontrado na nuvem.</td></tr>';
+                corpoTabela.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-slate-400">Nenhum lançamento encontrado com os filtros selecionados.</td></tr>';
             }
 
+            let saldoAcumulado = 0;
+            if (saldoInicialObj.credor === 'Deivid') saldoAcumulado = saldoInicialObj.valor;
+            if (saldoInicialObj.credor === 'Ronei') saldoAcumulado = -saldoInicialObj.valor;
+
             lancamentosFiltrados.forEach((item, index) => {
-                let aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
-                let aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
+                let aporteRonei = 0;
+                let aporteDeivid = 0;
 
-                totalRonei += aporteRonei;
-                totalDeivid += aporteDeivid;
+                if (item.categoria === 'Transferência entre Sócios') {
+                    if (item.socio === 'Ronei') {
+                        totalRonei += item.valor * 2;
+                    } else if (item.socio === 'Deivid') {
+                        totalDeivid += item.valor * 2;
+                    }
+                } else {
+                    aporteRonei = (item.socio === 'Ronei') ? item.valor : 0;
+                    aporteDeivid = (item.socio === 'Deivid') ? item.valor : 0;
+                    totalRonei += aporteRonei;
+                    totalDeivid += aporteDeivid;
+                }
 
-                saldoAcumulado = (totalDeivid - totalRonei) / 2.0;
+                saldoAcumulado = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
 
                 let corTexto = saldoAcumulado > 0 ? 'text-emerald-700 font-bold' : (saldoAcumulado < 0 ? 'text-red-700 font-bold' : 'text-slate-700');
                 let sinalTexto = saldoAcumulado > 0 ? '🟢 + ' : (saldoAcumulado < 0 ? '🔴 - ' : '');
 
                 const tr = document.createElement('tr');
-                tr.className = 'border-b border-slate-200 hover:bg-slate-50';
+                tr.className = `border-b border-slate-200 hover:bg-slate-50 ${item.pendente ? 'bg-amber-50/60' : ''}`;
                 tr.innerHTML = `
                     <td class="p-1.5 text-center font-mono text-slate-500">[${index + 1}]</td>
-                    <td class="p-1.5 text-center">${formatarData(item.data)}</td>
-                    <td class="p-1.5 font-medium text-slate-800">${item.descricao} <span class="text-[10px] text-slate-400 font-normal">(${item.categoria})</span></td>
-                    <td class="p-1.5 text-right font-mono">${aporteRonei > 0 ? 'R$ ' + aporteRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2}) : 'R$ 0,00'}</td>
-                    <td class="p-1.5 text-right font-mono">${aporteDeivid > 0 ? 'R$ ' + aporteDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2}) : 'R$ 0,00'}</td>
-                    <td class="p-1.5 text-right font-mono ${corTexto}">${sinalTexto}R$ ${Math.abs(saldoAcumulado).toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
-                    <td class="p-1.5 text-center no-print">
-                        <button onclick="apagarItem('${item.idDoc}')" class="text-slate-400 hover:text-red-600 text-[10px]">❌</button>
+                    <td class="p-1.5 text-center whitespace-nowrap">${formatarData(item.data)}</td>
+                    <td class="p-1.5 font-medium text-slate-800">
+                        <div class="flex items-center gap-1">
+                            ${item.pendente ? '<span class="bg-amber-200 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded">🟡 PENDENTE</span>' : ''}
+                            <span>${item.descricao}</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 font-normal">🏷️ ${item.centroCusto || 'Geral'} | ${item.categoria || 'Outros'}</div>
+                    </td>
+                    <td class="p-1.5 text-right font-mono whitespace-nowrap">${aporteRonei > 0 ? 'R$ ' + aporteRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'R$ 0,00'}</td>
+                    <td class="p-1.5 text-right font-mono whitespace-nowrap">${aporteDeivid > 0 ? 'R$ ' + aporteDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'R$ 0,00'}</td>
+                    <td class="p-1.5 text-right font-mono whitespace-nowrap ${corTexto}">${sinalTexto}R$ ${Math.abs(saldoAcumulado).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td class="p-1.5 text-center no-print whitespace-nowrap">
+                        <div class="flex items-center justify-center gap-1.5">
+                            ${item.anexoData ? `<button onclick="abrirAnexo('${item.idDoc}')" title="Ver Anexo/PDF" class="text-blue-600 hover:text-blue-800 text-xs">📄</button>` : ''}
+                            <button onclick="prepararEdicao('${item.idDoc}')" title="Editar" class="text-amber-600 hover:text-amber-800 text-xs">✏️</button>
+                            <button onclick="apagarItem('${item.idDoc}')" title="Excluir" class="text-red-500 hover:text-red-700 text-xs">❌</button>
+                        </div>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
 
-            document.getElementById('resumo-ronei').innerText = `R$ ${totalRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
-            document.getElementById('resumo-deivid').innerText = `R$ ${totalDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+            document.getElementById('resumo-ronei').innerText = `R$ ${totalRonei.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            document.getElementById('resumo-deivid').innerText = `R$ ${totalDeivid.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             
-            const diferencaBruta = totalDeivid - totalRonei;
-            const resumoDiferencaElem = document.getElementById('resumo-diferenca');
-            resumoDiferencaElem.innerText = `${diferencaBruta >= 0 ? '' : '- '}R$ ${Math.abs(diferencaBruta).toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
-            resumoDiferencaElem.className = `p-2 text-right font-mono font-bold ${diferencaBruta < 0 ? 'text-red-700' : 'text-emerald-700'}`;
+            const saldoIniElem = document.getElementById('resumo-saldo-inicial');
+            if (saldoInicialObj.valor > 0) {
+                saldoIniElem.innerText = `R$ ${saldoInicialObj.valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})} (${saldoInicialObj.credor} a receber)`;
+            } else {
+                saldoIniElem.innerText = 'R$ 0,00 (Zerado)';
+            }
 
-            const posicaoLiquida = (totalDeivid - totalRonei) / 2.0;
+            const posicaoLiquida = (saldoInicialObj.credor === 'Deivid' ? saldoInicialObj.valor : (saldoInicialObj.credor === 'Ronei' ? -saldoInicialObj.valor : 0)) + ((totalDeivid - totalRonei) / 2.0);
             const resumoPosicaoElem = document.getElementById('resumo-posicao');
 
             if (posicaoLiquida > 0) {
-                resumoPosicaoElem.innerText = `DEIVID TEM A RECEBER R$ ${posicaoLiquida.toLocaleString('pt-BR', {minimumFractionDigits: 2})} DE RONEI`;
+                resumoPosicaoElem.innerText = `DEIVID TEM A RECEBER R$ ${posicaoLiquida.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} DE RONEI`;
                 resumoPosicaoElem.className = 'p-2 text-right font-bold text-emerald-700';
             } else if (posicaoLiquida < 0) {
-                resumoPosicaoElem.innerText = `DEIVID DEVE R$ ${Math.abs(posicaoLiquida).toLocaleString('pt-BR', {minimumFractionDigits: 2})} PARA RONEI`;
+                resumoPosicaoElem.innerText = `DEIVID DEVE R$ ${Math.abs(posicaoLiquida).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} PARA RONEI`;
                 resumoPosicaoElem.className = 'p-2 text-right font-bold text-red-700';
             } else {
                 resumoPosicaoElem.innerText = 'SALDOS ZERADOS / QUITADOS';
                 resumoPosicaoElem.className = 'p-2 text-right font-bold text-slate-700';
             }
+        };
+
+        function formatarData(dataStr) {
+            if(!dataStr) return '';
+            const partes = dataStr.split('-');
+            return `${partes[2]}/${partes[1]}/${partes[0]}`;
         }
 
         window.limparFiltros = function() {
@@ -214,13 +500,12 @@
             document.getElementById('filtro-data-fim').value = '';
             document.getElementById('filtro-pagador').value = '';
             document.getElementById('filtro-categoria').value = '';
-            document.getElementById('filtro-valor-min').value = '';
+            document.getElementById('filtro-cc').value = '';
+            document.getElementById('filtro-status').value = '';
             atualizarTela();
         };
 
-        window.gerarPDF = function() {
-            window.print();
-        };
+        window.gerarPDF = function() { window.print(); };
 
         document.getElementById('data').valueAsDate = new Date();
         document.getElementById('data-extrato').innerText = new Date().toLocaleDateString('pt-BR');
@@ -228,48 +513,86 @@
 
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; }
-
+        
         @media print {
             .no-print { display: none !important; }
-            body { background: #ffffff !important; padding: 0 !important; color: #0f172a !important; }
-            .print-container { max-width: 100% !important; box-shadow: none !important; border: none !important; padding: 0 !important; margin: 0 !important; }
-            @page { size: A4 portrait; margin: 1.2cm; }
-            .page-block { break-inside: avoid !important; page-break-inside: avoid !important; }
-            table.data-table { width: 100% !important; border-collapse: collapse !important; table-layout: fixed !important; }
-            table.data-table th { background-color: #065f46 !important; color: #ffffff !important; font-weight: bold !important; padding: 6px 8px !important; font-size: 8pt !important; border: 1px solid #065f46 !important; }
-            table.data-table td { padding: 6px 8px !important; border: 1px solid #cbd5e1 !important; font-size: 8.5pt !important; }
-            .summary-table { width: 60% !important; margin-left: auto !important; border: 1.5px solid #0f172a !important; border-collapse: collapse !important; break-inside: avoid !important; }
-            .summary-table th { background-color: #1e293b !important; color: #ffffff !important; padding: 6px 8px !important; font-size: 8.5pt !important; }
-            .summary-table td { padding: 6px 8px !important; border-bottom: 1px solid #e2e8f0 !important; font-size: 8.5pt !important; }
+            html, body { 
+                background: #ffffff !important; 
+                padding: 0 !important; 
+                margin: 0 !important; 
+                width: 100% !important; 
+            }
+            .print-container { 
+                max-width: 100% !important; 
+                box-shadow: none !important; 
+                border: none !important; 
+                padding: 0 !important; 
+                margin: 0 !important; 
+            }
+            @page { 
+                size: A4 portrait; 
+                margin: 0.8cm 1cm 0.8cm 1cm; 
+            }
+            table.data-table { 
+                width: 100% !important; 
+                border-collapse: collapse !important; 
+                table-layout: auto !important; 
+            }
+            table.data-table th, table.data-table td { 
+                border: 1px solid #cbd5e1 !important; 
+                padding: 4px 6px !important; 
+                font-size: 7.5pt !important; 
+            }
+            table.data-table th {
+                background-color: #065f46 !important;
+                color: #ffffff !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
         }
     </style>
 </head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
+<body class="bg-slate-100 min-h-screen p-2 md:p-6">
 
-    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden p-4 md:p-6 print-container">
+    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden p-3 md:p-6 print-container">
         
-        <!-- CABEÇALHO DO EXTRATO -->
-        <div class="border-b-2 border-emerald-800 pb-3 mb-4 flex justify-between items-end page-block">
+        <!-- CABEÇALHO DA PÁGINA -->
+        <div class="border-b-2 border-emerald-800 pb-2 mb-3 flex justify-between items-end">
             <div>
-                <h1 class="text-xl md:text-2xl font-bold text-emerald-800 uppercase tracking-tight">EXTRATO DE CONCILIAÇÃO E ACERTO DE SÓCIOS</h1>
+                <h1 class="text-lg md:text-2xl font-bold text-emerald-800 uppercase tracking-tight">EXTRATO DE CONCILIAÇÃO E ACERTO DE SÓCIOS</h1>
                 <p class="text-xs font-bold text-slate-600">SOCIEDADE DR</p>
             </div>
             <div class="text-right text-[11px] text-slate-600 leading-tight">
-                <p><b>Operador do App:</b> Deivid</p>
-                <p><b>Sócio Parceiro:</b> Ronei</p>
+                <p><b>Operador:</b> Deivid | <b>Sócio:</b> Ronei</p>
                 <p><b>Emissão:</b> <span id="data-extrato">--/--/----</span></p>
             </div>
         </div>
 
-        <!-- FORMULÁRIO DE LANÇAMENTO RÁPIDO (OCULTO NO PDF) -->
+        <!-- FORMULÁRIO DE LANÇAMENTO -->
         <div class="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-200 no-print">
-            <h2 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1">➕ Novo Lançamento Rápido</h2>
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-sm font-bold text-slate-700">➕ Lançamento / Edição</h2>
+                <div class="flex gap-2">
+                    <button type="button" onclick="configurarSaldoInicial()" class="text-xs font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-lg border border-amber-300">
+                        ⚙️ Saldo Inicial
+                    </button>
+                    <button type="button" onclick="adicionarCentroCusto()" class="text-xs font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg border border-emerald-300">
+                        ⚙️ + Centro de Custo
+                    </button>
+                </div>
+            </div>
+
             <form id="form-lancamento" class="space-y-3">
-                
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div class="md:col-span-2">
-                        <label class="block text-xs font-medium text-slate-600">Descrição / Histórico</label>
-                        <input type="text" id="descricao" placeholder="Ex: Arrendamento Dinei, Quirela CVALE, Diária" required class="w-full mt-1 p-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 border-slate-300">
+                        <label class="block text-xs font-medium text-slate-600">Descrição / Fornecedor</label>
+                        <input type="text" id="descricao" placeholder="Ex: Arrendamento Dinei, Quirela CVALE" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600">Centro de Custo</label>
+                        <select id="centro-custo" class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300 bg-white">
+                            <!-- Preenchido via JS -->
+                        </select>
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-slate-600">Categoria</label>
@@ -277,16 +600,17 @@
                             <option value="Arrendamento">Arrendamento</option>
                             <option value="Nutrição / Ração">Nutrição / Ração</option>
                             <option value="Mão de Obra">Mão de Obra</option>
-                            <option value="Infraestrutura">Infraestrutura / Benfeitorias</option>
+                            <option value="Infraestrutura">Infraestrutura</option>
                             <option value="Frete / Logística">Frete / Logística</option>
                             <option value="Compra de Gado">Compra de Gado</option>
+                            <option value="Transferência entre Sócios">💸 Transferência entre Sócios</option>
                             <option value="Impostos / Taxas">Impostos / Taxas</option>
                             <option value="Outros">Outros</option>
                         </select>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div>
                         <label class="block text-xs font-medium text-slate-600">Valor (R$)</label>
                         <input type="number" step="0.01" id="valor" placeholder="0,00" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
@@ -296,35 +620,61 @@
                         <input type="date" id="data" required class="w-full mt-1 p-2 border rounded-lg text-sm border-slate-300">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-emerald-800">Quem Pagou? (Sócio)</label>
+                        <label class="block text-xs font-bold text-emerald-800">Quem Pagou / Enviou?</label>
                         <select id="socio-pagador" class="w-full mt-1 p-2 border border-emerald-600 rounded-lg text-sm bg-emerald-50 font-bold text-slate-800">
                             <option value="Deivid">Deivid</option>
                             <option value="Ronei">Ronei</option>
                         </select>
                     </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600">Anexo (PDF ou Foto)</label>
+                        <input type="file" id="anexo-pdf" accept="application/pdf,image/*" class="w-full mt-1 text-xs border border-slate-300 rounded-lg p-1.5 bg-white">
+                        <button type="button" onclick="lerComprovanteIA()" class="mt-1 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded-lg text-xs transition shadow flex items-center justify-center gap-1">
+                            ✨ Ler nota com Mindee IA
+                        </button>
+                        <p id="status-ocr" class="hidden"></p>
+                    </div>
                 </div>
 
-                <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow">
-                    ☁️ Salvar no Banco de Dados (Nuvem)
-                </button>
+                <div class="flex justify-between items-center bg-slate-100 p-2 rounded-lg border border-slate-200">
+                    <label class="flex items-center gap-2 cursor-pointer text-xs font-semibold text-amber-800">
+                        <input type="checkbox" id="is-pendente" class="rounded text-amber-600 focus:ring-amber-500">
+                        🟡 Salvar como Pendente / Rascunho (Finalizar depois)
+                    </label>
+
+                    <div id="container-remover-anexo" class="hidden">
+                        <button type="button" onclick="removerAnexoExistente()" class="text-xs text-red-600 hover:underline font-semibold">
+                            🗑️ Remover Anexo Atual
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow">
+                        ☁️ Salvar no Banco de Dados (Nuvem)
+                    </button>
+                    <button type="button" id="btn-cancelar-edicao" onclick="cancelarEdicao()" class="hidden bg-slate-400 hover:bg-slate-500 text-white font-bold px-4 py-2.5 rounded-lg text-sm">
+                        Cancelar
+                    </button>
+                </div>
             </form>
         </div>
 
-        <!-- BARRA DE FILTROS AVANÇADOS (OCULTO NO PDF) -->
+        <!-- FILTROS DE CONSULTA -->
         <div class="mb-4 p-3 bg-slate-100 rounded-xl border border-slate-200 no-print">
             <div class="flex justify-between items-center mb-2">
-                <span class="text-xs font-bold text-slate-700 flex items-center gap-1">🔍 Filtros de Consulta</span>
+                <span class="text-xs font-bold text-slate-700">🔍 Filtros de Consulta</span>
                 <button onclick="limparFiltros()" class="text-[11px] text-emerald-700 font-semibold hover:underline">Limpar Filtros</button>
             </div>
             
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
                 <div>
                     <label class="block text-[10px] text-slate-500">Data Inicial</label>
-                    <input type="date" id="filtro-data-ini" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
+                    <input type="date" id="filtro-data-ini" onchange="atualizarTela()" oninput="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
                 </div>
                 <div>
                     <label class="block text-[10px] text-slate-500">Data Final</label>
-                    <input type="date" id="filtro-data-fim" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
+                    <input type="date" id="filtro-data-fim" onchange="atualizarTela()" oninput="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
                 </div>
                 <div>
                     <label class="block text-[10px] text-slate-500">Quem Pagou?</label>
@@ -332,6 +682,12 @@
                         <option value="">Todos</option>
                         <option value="Deivid">Deivid</option>
                         <option value="Ronei">Ronei</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-500">Centro de Custo</label>
+                    <select id="filtro-cc" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
+                        <!-- Preenchido via JS -->
                     </select>
                 </div>
                 <div>
@@ -344,18 +700,23 @@
                         <option value="Infraestrutura">Infraestrutura</option>
                         <option value="Frete / Logística">Frete / Logística</option>
                         <option value="Compra de Gado">Compra de Gado</option>
+                        <option value="Transferência entre Sócios">Transferência entre Sócios</option>
                         <option value="Impostos / Taxas">Impostos / Taxas</option>
                         <option value="Outros">Outros</option>
                     </select>
                 </div>
                 <div>
-                    <label class="block text-[10px] text-slate-500">Valor Mínimo (R$)</label>
-                    <input type="number" id="filtro-valor-min" placeholder="0,00" oninput="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300">
+                    <label class="block text-[10px] text-slate-500">Status</label>
+                    <select id="filtro-status" onchange="atualizarTela()" class="w-full p-1.5 border rounded border-slate-300 bg-white">
+                        <option value="">Todos</option>
+                        <option value="concluidos">Concluídos</option>
+                        <option value="pendentes">🟡 Pendentes</option>
+                    </select>
                 </div>
             </div>
         </div>
 
-        <!-- CONTROLES DO APLICATIVO (OCULTO NO PDF) -->
+        <!-- CONTROLES -->
         <div class="flex justify-between items-center mb-3 no-print">
             <h2 class="text-sm font-bold text-slate-700">📋 Extrato em Nuvem</h2>
             <div class="flex gap-2">
@@ -368,37 +729,39 @@
             </div>
         </div>
 
-        <!-- TABELA DE LANÇAMENTOS E CONCILIAÇÃO -->
-        <div class="overflow-x-auto mb-4 page-block">
+        <!-- TABELA DE LANÇAMENTOS -->
+        <div class="overflow-x-auto mb-4">
             <table class="data-table w-full text-xs border-collapse border border-slate-300">
                 <thead>
                     <tr class="bg-emerald-800 text-white text-center font-bold">
-                        <th class="p-1.5 border border-emerald-800 w-[6%]">Lanç.</th>
-                        <th class="p-1.5 border border-emerald-800 w-[11%]">Data</th>
-                        <th class="p-1.5 border border-emerald-800 text-left w-[33%]">Descrição / Categoria</th>
-                        <th class="p-1.5 border border-emerald-800 text-right w-[15%]">Ronei (Bolso)</th>
-                        <th class="p-1.5 border border-emerald-800 text-right w-[15%]">Deivid (Bolso)</th>
+                        <th class="p-1.5 border border-emerald-800 w-[5%]">Nº</th>
+                        <th class="p-1.5 border border-emerald-800 w-[12%]">Data</th>
+                        <th class="p-1.5 border border-emerald-800 text-left w-[33%]">Descrição / Centro de Custo</th>
+                        <th class="p-1.5 border border-emerald-800 text-right w-[14%]">Ronei (Bolso)</th>
+                        <th class="p-1.5 border border-emerald-800 text-right w-[14%]">Deivid (Bolso)</th>
                         <th class="p-1.5 border border-emerald-800 text-right w-[15%]">Saldo Acumulado</th>
-                        <th class="p-1.5 border border-emerald-800 w-[5%] no-print">Excl.</th>
+                        <th class="p-1.5 border border-emerald-800 w-[7%] no-print">Ações</th>
                     </tr>
                 </thead>
                 <tbody id="tabela-corpo">
-                    <tr>
-                        <td colspan="7" class="text-center py-4 text-slate-400">Carregando dados da nuvem...</td>
-                    </tr>
+                    <tr><td colspan="7" class="text-center py-4 text-slate-400">Carregando dados...</td></tr>
                 </tbody>
             </table>
         </div>
 
-        <!-- RESUMO CONSOLIDADO DO ACERTO -->
-        <div class="flex justify-end mt-4 page-block">
-            <table class="summary-table w-full md:w-3/5 border-1.5 border-slate-900 text-xs rounded overflow-hidden">
+        <!-- RESUMO CONSOLIDADO -->
+        <div class="flex justify-end mt-4">
+            <table class="w-full md:w-3/5 border-1.5 border-slate-900 text-xs rounded overflow-hidden">
                 <thead>
                     <tr class="bg-slate-800 text-white font-bold uppercase text-center">
                         <th colspan="2" class="p-2">Resumo Consolidado do Acerto</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-200">
+                    <tr>
+                        <td class="p-2">Saldo Inicial da Sociedade:</td>
+                        <td class="p-2 text-right font-mono font-bold text-slate-700" id="resumo-saldo-inicial">R$ 0,00</td>
+                    </tr>
                     <tr>
                         <td class="p-2">Total Aportado por <b>RONEI</b>:</td>
                         <td class="p-2 text-right font-mono font-bold" id="resumo-ronei">R$ 0,00</td>
@@ -407,21 +770,12 @@
                         <td class="p-2">Total Aportado por <b>DEIVID</b>:</td>
                         <td class="p-2 text-right font-mono font-bold" id="resumo-deivid">R$ 0,00</td>
                     </tr>
-                    <tr>
-                        <td class="p-2">Diferença Bruta de Aportes (Deivid - Ronei):</td>
-                        <td class="p-2 text-right font-mono font-bold" id="resumo-diferenca">R$ 0,00</td>
-                    </tr>
                     <tr class="bg-slate-100 font-bold">
                         <td class="p-2">POSIÇÃO FINAL ATUALIZADA:</td>
                         <td class="p-2 text-right font-bold text-emerald-700" id="resumo-posicao">SALDOS ZERADOS</td>
                     </tr>
                 </tbody>
             </table>
-        </div>
-
-        <!-- RODAPÉ DA FOLHA IMPRESSA -->
-        <div class="hidden print:block mt-8 pt-2 border-t border-slate-300 text-center text-[10px] text-slate-400 page-block">
-            Documento oficial de prestação de contas — Sociedade DR (Deivid & Ronei) • Gerado pelo Aplicativo de Gestão Financeira.
         </div>
 
     </div>
