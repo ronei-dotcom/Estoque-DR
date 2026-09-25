@@ -4,15 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Estoque de Gado - Sociedade DR</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- SDKs do Firebase v10 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // CHAVE DO FIREBASE (Mesmo banco de dados da Sociedade DR)
         const firebaseConfig = {
             apiKey: "AIzaSyDgnDHu-dHCo5oZRo113M5jQ1kxwX9_1uE",
             authDomain: "sociedade-dr.firebaseapp.com",
@@ -25,33 +22,29 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         
-        // Novas coleções exclusivas para o gado
         const colLocais = collection(db, "locais_gado_dr");
         const colMovimentacoes = collection(db, "movimentacoes_gado_dr");
 
         let locais = [];
         let movimentacoes = [];
 
-        // 1. CARREGAR LOCAIS (FAZENDAS/PASTOS)
         onSnapshot(colLocais, (snapshot) => {
             locais = [];
             snapshot.forEach(d => locais.push({ id: d.id, nome: d.data().nome }));
             atualizarSelectsLocais();
-            atualizarPainelSaldos();
+            atualizarQuadroEstoque();
         });
 
-        // 2. CARREGAR MOVIMENTAÇÕES (COMPRAS, VENDAS, TRANSFERÊNCIAS)
         const qMov = query(colMovimentacoes, orderBy("data", "desc"));
         onSnapshot(qMov, (snapshot) => {
             movimentacoes = [];
             snapshot.forEach((documento) => {
                 movimentacoes.push({ idDoc: documento.id, ...documento.data() });
             });
-            atualizarTabela();
-            atualizarPainelSaldos();
+            atualizarTabelaHistorico();
+            atualizarQuadroEstoque();
         });
 
-        // CONTROLAR VISIBILIDADE DOS CAMPOS DE ORIGEM E DESTINO
         window.mudarTipoMovimento = function() {
             const tipo = document.getElementById('tipo').value;
             const divOrigem = document.getElementById('div-origem');
@@ -69,9 +62,8 @@
             }
         };
 
-        // CADASTRAR NOVO LOCAL (FAZENDA OU PASTO)
         window.adicionarLocal = async function() {
-            const novoLocal = prompt("Digite o nome da Fazenda/Arrendamento e o Pasto (Ex: Arrendamento Dinei - Lote Fundo):");
+            const novoLocal = prompt("Digite o nome da Fazenda/Arrendamento e o Pasto (Ex: Arrendamento Dinei):");
             if (novoLocal && novoLocal.trim() !== "") {
                 try {
                     await addDoc(colLocais, { nome: novoLocal.trim() });
@@ -82,32 +74,25 @@
             }
         };
 
-        // ATUALIZAR LISTAS DE SELEÇÃO
         function atualizarSelectsLocais() {
             const selectOrigem = document.getElementById('origem');
             const selectDestino = document.getElementById('destino');
-            const selectFiltro = document.getElementById('filtro-local');
-
+            
             const valorOrigem = selectOrigem.value;
             const valorDestino = selectDestino.value;
-            const valorFiltro = selectFiltro.value;
 
-            selectOrigem.innerHTML = '<option value="">Selecione o Local de Origem</option>';
-            selectDestino.innerHTML = '<option value="">Selecione o Local de Destino</option>';
-            selectFiltro.innerHTML = '<option value="">Todos os Locais</option>';
+            selectOrigem.innerHTML = '<option value="">Selecione a Origem</option>';
+            selectDestino.innerHTML = '<option value="">Selecione o Destino</option>';
 
             locais.sort((a,b) => a.nome.localeCompare(b.nome)).forEach(local => {
                 selectOrigem.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
                 selectDestino.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
-                selectFiltro.innerHTML += `<option value="${local.nome}">${local.nome}</option>`;
             });
 
             if (valorOrigem) selectOrigem.value = valorOrigem;
             if (valorDestino) selectDestino.value = valorDestino;
-            if (valorFiltro) selectFiltro.value = valorFiltro;
         }
 
-        // SALVAR MOVIMENTAÇÃO
         document.getElementById('form-movimentacao').addEventListener('submit', async function(e) {
             e.preventDefault();
 
@@ -119,15 +104,14 @@
             const destino = document.getElementById('destino').value;
             const observacao = document.getElementById('observacao').value;
 
-            // Validações
             if ((tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte' || tipo === 'Transferência') && !origem) {
-                alert("Por favor, informe o local de ORIGEM do gado."); return;
+                alert("Informe o local de ORIGEM."); return;
             }
             if ((tipo === 'Compra' || tipo === 'Nascimento' || tipo === 'Transferência') && !destino) {
-                alert("Por favor, informe o local de DESTINO do gado."); return;
+                alert("Informe o local de DESTINO."); return;
             }
             if (tipo === 'Transferência' && origem === destino) {
-                alert("A Origem e o Destino não podem ser o mesmo local."); return;
+                alert("A Origem e o Destino não podem ser iguais."); return;
             }
 
             try {
@@ -142,13 +126,12 @@
                 document.getElementById('observacao').value = '';
                 alert("Movimentação registrada com sucesso!");
             } catch (err) {
-                alert("Erro ao salvar: " + err.message);
+                alert("Erro ao salvar.");
             }
         });
 
-        // APAGAR MOVIMENTAÇÃO
         window.apagarMovimentacao = async function(idDoc) {
-            if(confirm("Deseja apagar este registro? Isso afetará os saldos automaticamente.")) {
+            if(confirm("Deseja apagar este registro? Os saldos serão recalculados automaticamente.")) {
                 try {
                     await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
                 } catch(err) {
@@ -157,227 +140,269 @@
             }
         };
 
-        // CALCULAR E ATUALIZAR SALDOS
-        function atualizarPainelSaldos() {
+        // GERA O QUADRO SÉRIO DE ESTOQUE
+        function atualizarQuadroEstoque() {
             const saldos = {};
             let totalGeral = 0;
+            let totalFemeas = 0;
+            let totalMachos = 0;
 
-            // Iniciar com zero
-            locais.forEach(l => saldos[l.nome] = 0);
+            locais.forEach(l => saldos[l.nome] = {});
 
-            // Calcular com base no histórico
             movimentacoes.forEach(mov => {
+                const cat = mov.categoria;
+                const qtd = mov.quantidade;
+
                 if (mov.tipo === 'Compra' || mov.tipo === 'Nascimento') {
-                    if(saldos[mov.destino] !== undefined) saldos[mov.destino] += mov.quantidade;
-                    totalGeral += mov.quantidade;
+                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
+                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 } 
                 else if (mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') {
-                    if(saldos[mov.origem] !== undefined) saldos[mov.origem] -= mov.quantidade;
-                    totalGeral -= mov.quantidade;
+                    if (saldos[mov.origem]) {
+                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                    }
                 } 
                 else if (mov.tipo === 'Transferência') {
-                    if(saldos[mov.origem] !== undefined) saldos[mov.origem] -= mov.quantidade;
-                    if(saldos[mov.destino] !== undefined) saldos[mov.destino] += mov.quantidade;
+                    if (saldos[mov.origem]) {
+                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                    }
+                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
+                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 }
             });
 
-            // Mostrar na tela
-            document.getElementById('total-cabecas').innerText = totalGeral;
-            
-            const gridSaldos = document.getElementById('grid-saldos-locais');
-            gridSaldos.innerHTML = '';
-            
-            for (const [nomeLocal, qtd] of Object.entries(saldos)) {
-                if (qtd > 0) {
-                    gridSaldos.innerHTML += `
-                        <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex justify-between items-center shadow-sm">
-                            <span class="text-sm font-semibold text-blue-900">${nomeLocal}</span>
-                            <span class="text-lg font-bold text-blue-700">${qtd} <span class="text-xs font-normal">cbçs</span></span>
-                        </div>
+            const tbody = document.getElementById('tabela-estoque-corpo');
+            tbody.innerHTML = '';
+
+            for (const local in saldos) {
+                const categoriasLocal = Object.keys(saldos[local]).filter(c => saldos[local][c] > 0);
+                const spanLocal = categoriasLocal.length;
+                let primeiraLinha = true;
+
+                if (spanLocal === 0) continue;
+
+                categoriasLocal.forEach(cat => {
+                    const qtd = saldos[local][cat];
+                    totalGeral += qtd;
+
+                    // Classificador simples Macho/Fêmea
+                    const catLower = cat.toLowerCase();
+                    if (catLower.includes('fêmea') || catLower.includes('vaca') || catLower.includes('novilha') || catLower.includes('matriz')) {
+                        totalFemeas += qtd;
+                    } else if (catLower.includes('macho') || catLower.includes('boi') || catLower.includes('touro') || catLower.includes('garrote') || catLower.includes('rufião')) {
+                        totalMachos += qtd;
+                    }
+
+                    const tr = document.createElement('tr');
+                    tr.className = "bg-white text-slate-800";
+
+                    let tdLocal = '';
+                    if (primeiraLinha) {
+                        tdLocal = `<td class="border border-slate-400 p-2 text-center font-bold bg-slate-50 align-middle" rowspan="${spanLocal}">${local}</td>`;
+                        primeiraLinha = false;
+                    }
+
+                    tr.innerHTML = `
+                        <td class="border border-slate-400 p-2 font-medium">${cat}</td>
+                        <td class="border border-slate-400 p-2 text-center font-bold">${qtd}</td>
+                        ${tdLocal}
                     `;
-                }
+                    tbody.appendChild(tr);
+                });
             }
 
-            if (gridSaldos.innerHTML === '') {
-                gridSaldos.innerHTML = '<p class="text-xs text-slate-400">Nenhum gado em estoque nos pastos cadastrados.</p>';
+            if (totalGeral === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-500 border border-slate-400">Estoque zerado ou sem dados.</td></tr>';
             }
+
+            document.getElementById('estoque-total').innerText = totalGeral;
+            document.getElementById('total-cabecas').innerText = totalGeral;
+            document.getElementById('total-femeas').innerText = totalFemeas;
+            document.getElementById('total-machos').innerText = totalMachos;
+            
+            const hoje = new Date();
+            document.getElementById('data-estoque').innerText = hoje.toLocaleDateString('pt-BR');
         }
 
-        // ATUALIZAR TABELA DE HISTÓRICO
-        window.atualizarTabela = function() {
+        function atualizarTabelaHistorico() {
             const corpoTabela = document.getElementById('tabela-historico');
-            const filtroFiltro = document.getElementById('filtro-local').value;
-
             corpoTabela.innerHTML = '';
 
-            let movsFiltradas = movimentacoes;
-            if (filtroFiltro) {
-                movsFiltradas = movimentacoes.filter(m => m.origem === filtroFiltro || m.destino === filtroFiltro);
-            }
-
-            if (movsFiltradas.length === 0) {
-                corpoTabela.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-slate-400">Nenhuma movimentação encontrada.</td></tr>';
+            if (movimentacoes.length === 0) {
+                corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação.</td></tr>';
                 return;
             }
 
-            movsFiltradas.forEach(mov => {
-                let icone = '🔄';
-                let cor = 'text-slate-700';
+            movimentacoes.forEach(mov => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-300 bg-white hover:bg-slate-50 text-xs";
                 
-                if(mov.tipo === 'Compra' || mov.tipo === 'Nascimento') { icone = '🟢'; cor = 'text-emerald-600 font-bold'; }
-                if(mov.tipo === 'Venda' || mov.tipo === 'Abate') { icone = '🔴'; cor = 'text-red-600 font-bold'; }
-                if(mov.tipo === 'Morte') { icone = '⚫'; cor = 'text-slate-900 font-bold'; }
-                if(mov.tipo === 'Transferência') { icone = '🔵'; cor = 'text-blue-600 font-bold'; }
-
                 const partesData = mov.data.split('-');
                 const dataFormatada = `${partesData[2]}/${partesData[1]}/${partesData[0]}`;
 
-                const tr = document.createElement('tr');
-                tr.className = "border-b border-slate-200 hover:bg-slate-50";
                 tr.innerHTML = `
-                    <td class="p-2 text-center whitespace-nowrap text-xs">${dataFormatada}</td>
-                    <td class="p-2 text-center font-medium ${cor} text-xs">${icone} ${mov.tipo}</td>
-                    <td class="p-2 text-center font-bold text-slate-800 text-sm">${mov.quantidade}</td>
-                    <td class="p-2 text-center text-xs text-slate-600">${mov.categoria}</td>
-                    <td class="p-2 text-xs">
-                        <div class="text-slate-500">De: <span class="font-semibold text-slate-800">${mov.origem}</span></div>
-                        <div class="text-slate-500">Para: <span class="font-semibold text-slate-800">${mov.destino}</span></div>
-                        ${mov.observacao ? `<div class="text-[10px] text-slate-400 mt-1">Obs: ${mov.observacao}</div>` : ''}
+                    <td class="p-2 text-center font-mono">${dataFormatada}</td>
+                    <td class="p-2 font-bold text-slate-700">${mov.tipo}</td>
+                    <td class="p-2 text-center font-bold">${mov.quantidade}</td>
+                    <td class="p-2 text-slate-600">
+                        ${mov.categoria}<br>
+                        <span class="text-[10px] text-slate-500 font-mono">De: ${mov.origem} | Para: ${mov.destino}</span>
                     </td>
                     <td class="p-2 text-center">
-                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-500 hover:text-red-700 text-xs">❌</button>
+                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-600 font-bold hover:underline text-[10px]">Excluir</button>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
-        };
+        }
 
         document.getElementById('data').valueAsDate = new Date();
     </script>
 </head>
-<body class="bg-slate-100 min-h-screen p-2 md:p-6">
+<body class="bg-slate-100 min-h-screen p-2 md:p-6 font-sans">
 
-    <div class="max-w-5xl mx-auto space-y-4">
+    <div class="max-w-5xl mx-auto space-y-6">
         
         <!-- CABEÇALHO -->
-        <div class="bg-blue-900 rounded-2xl shadow-lg p-4 md:p-6 text-white flex justify-between items-center">
+        <div class="bg-slate-900 rounded shadow p-4 text-white flex justify-between items-center border-b-4 border-slate-600">
             <div>
-                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-tight">🐂 Controle de Rebanho</h1>
-                <p class="text-blue-200 text-xs md:text-sm">Gestão de Lotes, Pastos e Transferências - Sociedade DR</p>
+                <h1 class="text-xl md:text-2xl font-bold uppercase tracking-widest">Controle de Estoque</h1>
+                <p class="text-slate-400 text-xs tracking-wider">SOCIEDADE DR - PECUÁRIA</p>
             </div>
             <div class="text-right">
-                <p class="text-[10px] text-blue-300 uppercase tracking-widest mb-1">Total na Sociedade</p>
-                <p class="text-3xl md:text-4xl font-black leading-none"><span id="total-cabecas">0</span> <span class="text-sm font-normal text-blue-300">cabeças</span></p>
+                <p class="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Total de Cabeças</p>
+                <p class="text-3xl font-black leading-none"><span id="total-cabecas">0</span></p>
             </div>
         </div>
 
-        <!-- DASHBOARD DE SALDOS POR LOCAL -->
-        <div class="bg-white rounded-xl shadow p-4">
-            <div class="flex justify-between items-center mb-3">
-                <h2 class="text-sm font-bold text-slate-700">📍 Onde o gado está agora? (Saldo por Pasto)</h2>
-                <button onclick="adicionarLocal()" class="text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300 px-3 py-1.5 rounded-lg hover:bg-blue-200 transition">
-                    + Criar Fazenda/Pasto
-                </button>
-            </div>
-            <div id="grid-saldos-locais" class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <p class="text-xs text-slate-400">Carregando saldos...</p>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            <!-- FORMULÁRIO DE NOVA MOVIMENTAÇÃO -->
-            <div class="md:col-span-1 bg-white rounded-xl shadow p-4 border-t-4 border-blue-600">
-                <h2 class="text-sm font-bold text-slate-700 mb-4">📝 Nova Movimentação</h2>
-                
-                <form id="form-movimentacao" class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">O que aconteceu?</label>
-                        <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-300 rounded text-sm bg-slate-50 font-semibold text-blue-900">
-                            <option value="Compra">🟢 Compra (Entrada de Lote)</option>
-                            <option value="Transferência">🔵 Transferência entre Pastos</option>
-                            <option value="Venda">🔴 Venda (Saída)</option>
-                            <option value="Abate">🔴 Abate</option>
-                            <option value="Nascimento">🟢 Nascimento</option>
-                            <option value="Morte">⚫ Morte</option>
-                        </select>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-xs font-medium text-slate-600">Data</label>
-                            <input type="date" id="data" required class="w-full mt-1 p-2 border border-slate-300 rounded text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-600">Qtd (Cabeças)</label>
-                            <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-300 rounded text-sm" placeholder="Ex: 45">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">Categoria</label>
-                        <select id="categoria" class="w-full mt-1 p-2 border border-slate-300 rounded text-sm bg-white">
-                            <option value="Misto (Várias)">Misto (Várias categorias)</option>
-                            <option value="Bezerros (M)">Bezerros (M)</option>
-                            <option value="Bezerras (F)">Bezerras (F)</option>
-                            <option value="Garrotes">Garrotes</option>
-                            <option value="Novilhas">Novilhas</option>
-                            <option value="Boi Magro">Boi Magro</option>
-                            <option value="Boi Gordo">Boi Gordo</option>
-                            <option value="Vacas">Vacas</option>
-                            <option value="Touros">Touros</option>
-                        </select>
-                    </div>
-
-                    <div id="div-origem" class="hidden bg-slate-50 p-2 rounded border border-slate-200">
-                        <label class="block text-[10px] font-bold text-red-700 uppercase">Saiu de onde? (Origem)</label>
-                        <select id="origem" class="w-full mt-1 p-1.5 border border-slate-300 rounded text-xs bg-white"></select>
-                    </div>
-
-                    <div id="div-destino" class="bg-blue-50 p-2 rounded border border-blue-200">
-                        <label class="block text-[10px] font-bold text-blue-700 uppercase">Foi para onde? (Destino)</label>
-                        <select id="destino" class="w-full mt-1 p-1.5 border border-slate-300 rounded text-xs bg-white"></select>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600">Observação / Fornecedor / Identificação do Lote</label>
-                        <input type="text" id="observacao" class="w-full mt-1 p-2 border border-slate-300 rounded text-xs" placeholder="Ex: Lote comprado do Sr. João">
-                    </div>
-
-                    <button type="submit" class="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-lg text-sm transition shadow mt-2">
-                        Salvar Movimentação
+            <!-- QUADRO DE ESTOQUE (ESTILO IMAGEM SÉRIA) -->
+            <div>
+                <div class="flex justify-between items-end mb-2">
+                    <h2 class="text-sm font-bold text-slate-800 uppercase">Posição de Estoque</h2>
+                    <button onclick="adicionarLocal()" class="text-xs font-bold text-slate-600 hover:text-slate-900 underline">
+                        + Cadastrar Local
                     </button>
-                </form>
-            </div>
-
-            <!-- HISTÓRICO E TABELA -->
-            <div class="md:col-span-2 bg-white rounded-xl shadow p-4">
-                <div class="flex justify-between items-center mb-3">
-                    <h2 class="text-sm font-bold text-slate-700">🕰️ Histórico de Movimentações</h2>
-                    <select id="filtro-local" onchange="atualizarTabela()" class="p-1 text-xs border border-slate-300 rounded">
-                        <!-- Preenchido via JS -->
-                    </select>
                 </div>
-
-                <div class="overflow-x-auto h-[450px] overflow-y-auto border border-slate-200 rounded">
-                    <table class="w-full text-left border-collapse">
-                        <thead class="bg-slate-100 sticky top-0 shadow-sm">
+                
+                <div class="rounded shadow border-2 border-slate-700 overflow-hidden bg-white">
+                    <div class="bg-slate-700 text-white flex justify-between px-4 py-2 font-bold text-sm tracking-wider">
+                        <span>ESTOQUE</span>
+                        <span id="data-estoque">--/--/----</span>
+                    </div>
+                    <table class="w-full text-sm border-collapse">
+                        <thead class="bg-slate-300 text-slate-800 uppercase text-xs">
                             <tr>
-                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Data</th>
-                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Tipo</th>
-                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Qtd</th>
-                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Categoria</th>
-                                <th class="p-2 text-xs font-bold text-slate-600">Trajeto / Observação</th>
-                                <th class="p-2 text-xs font-bold text-slate-600 text-center">Ações</th>
+                                <th class="border border-slate-400 p-2 text-left w-5/12">Categorias</th>
+                                <th class="border border-slate-400 p-2 text-center w-2/12">Saldo</th>
+                                <th class="border border-slate-400 p-2 text-center w-5/12">Local</th>
                             </tr>
                         </thead>
-                        <tbody id="tabela-historico">
-                            <tr><td colspan="6" class="text-center py-4 text-slate-400 text-xs">Carregando histórico...</td></tr>
+                        <tbody id="tabela-estoque-corpo">
+                            <!-- Preenchido via JS -->
+                        </tbody>
+                        <tfoot class="bg-slate-200 font-bold text-slate-900 text-sm">
+                            <tr>
+                                <td class="border border-slate-400 p-2 text-center uppercase">Total</td>
+                                <td class="border border-slate-400 p-2 text-center" id="estoque-total">0</td>
+                                <td class="border border-slate-400 p-2"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <!-- RESUMO MACHOS/FÊMEAS -->
+                <div class="w-full md:w-3/5 mt-4">
+                    <table class="w-full text-sm border-collapse border-2 border-slate-700 shadow-sm bg-white">
+                        <tbody>
+                            <tr class="text-slate-800 font-semibold border-b border-slate-400">
+                                <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Fêmeas</td>
+                                <td class="p-2 text-center w-24 font-bold" id="total-femeas">0</td>
+                            </tr>
+                            <tr class="text-slate-800 font-semibold">
+                                <td class="border-r border-slate-400 p-2 text-center bg-slate-100">Machos</td>
+                                <td class="p-2 text-center w-24 font-bold" id="total-machos">0</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
             </div>
 
+            <!-- FORMULÁRIO E HISTÓRICO -->
+            <div class="space-y-6">
+                
+                <div class="bg-white rounded border border-slate-300 shadow p-4">
+                    <h2 class="text-sm font-bold text-slate-800 uppercase border-b border-slate-200 pb-2 mb-3">Registrar Movimentação</h2>
+                    
+                    <form id="form-movimentacao" class="space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Operação</label>
+                                <select id="tipo" onchange="mudarTipoMovimento()" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-slate-50 font-bold text-slate-800">
+                                    <option value="Compra">Entrada (Compra)</option>
+                                    <option value="Nascimento">Entrada (Nascimento)</option>
+                                    <option value="Transferência">Transferência Interna</option>
+                                    <option value="Venda">Saída (Venda)</option>
+                                    <option value="Abate">Saída (Abate)</option>
+                                    <option value="Morte">Saída (Morte)</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Data</label>
+                                <input type="date" id="data" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Qtd</label>
+                                <input type="number" id="quantidade" min="1" required class="w-full mt-1 p-2 border border-slate-400 rounded text-sm font-bold" placeholder="0">
+                            </div>
+
+                            <div class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Categoria</label>
+                                <select id="categoria" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white">
+                                    <option value="Bezerro Macho">Bezerro Macho</option>
+                                    <option value="Bezerro Fêmea">Bezerro Fêmea</option>
+                                    <option value="Macho 13 a 24 Meses">Macho 13 a 24 Meses</option>
+                                    <option value="Fêmea 13 a 24 Meses">Fêmea 13 a 24 Meses</option>
+                                    <option value="Boi Magro (> 24m)">Boi Magro (> 24m)</option>
+                                    <option value="Boi Gordo (> 24m)">Boi Gordo (> 24m)</option>
+                                    <option value="Novilha">Novilha</option>
+                                    <option value="Vaca Matriz">Vaca Matriz</option>
+                                    <option value="Touro / Rufião">Touro / Rufião</option>
+                                </select>
+                            </div>
+
+                            <div id="div-origem" class="hidden col-span-2">
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Origem (Saiu de)</label>
+                                <select id="origem" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white"></select>
+                            </div>
+
+                            <div id="div-destino" class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-600 uppercase">Destino (Entrou em)</label>
+                                <select id="destino" class="w-full mt-1 p-2 border border-slate-400 rounded text-sm bg-white"></select>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded text-sm uppercase tracking-wide mt-2">
+                            Gravar Registro
+                        </button>
+                    </form>
+                </div>
+
+                <div class="bg-white rounded border border-slate-300 shadow overflow-hidden">
+                    <h2 class="text-sm font-bold text-slate-800 uppercase p-3 bg-slate-100 border-b border-slate-300">Histórico</h2>
+                    <div class="h-64 overflow-y-auto">
+                        <table class="w-full text-left border-collapse">
+                            <tbody id="tabela-historico">
+                                <!-- Preenchido via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
         </div>
     </div>
 
