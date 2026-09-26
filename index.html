@@ -68,16 +68,39 @@
             const tipo = document.getElementById('tipo').value;
             const divOrigem = document.getElementById('div-origem');
             const divDestino = document.getElementById('div-destino');
+            const divFornecedor = document.getElementById('div-fornecedor');
+            const divValor = document.getElementById('div-valor');
+            const labelValor = document.getElementById('label-valor');
             
             if (tipo === 'Compra' || tipo === 'Nascimento') {
                 divOrigem.classList.add('hidden');
                 divDestino.classList.remove('hidden');
+                
+                if(tipo === 'Compra') {
+                    divFornecedor.classList.remove('hidden');
+                    divValor.classList.remove('hidden');
+                    labelValor.innerText = "Custo Total da Compra (R$)";
+                } else {
+                    divFornecedor.classList.add('hidden');
+                    divValor.classList.add('hidden');
+                }
             } else if (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') {
                 divOrigem.classList.remove('hidden');
                 divDestino.classList.add('hidden');
+                
+                if (tipo === 'Venda' || tipo === 'Abate') {
+                    divFornecedor.classList.remove('hidden');
+                    divValor.classList.remove('hidden');
+                    labelValor.innerText = "Receita Total (R$)";
+                } else {
+                    divFornecedor.classList.add('hidden');
+                    divValor.classList.add('hidden');
+                }
             } else if (tipo === 'Transferência') {
                 divOrigem.classList.remove('hidden');
                 divDestino.classList.remove('hidden');
+                divFornecedor.classList.add('hidden');
+                divValor.classList.add('hidden');
             }
         };
 
@@ -121,6 +144,14 @@
             const origem = document.getElementById('origem').value;
             const destino = document.getElementById('destino').value;
             
+            let fornecedor = '';
+            let valorFinanceiro = 0;
+
+            if (tipo === 'Compra' || tipo === 'Venda' || tipo === 'Abate') {
+                fornecedor = document.getElementById('fornecedor').value.trim();
+                valorFinanceiro = parseFloat(document.getElementById('valor-financeiro').value) || 0;
+            }
+
             if ((tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte' || tipo === 'Transferência') && !origem) {
                 alert("Selecione a Origem."); return;
             }
@@ -143,10 +174,14 @@
                     categoria, 
                     origem: (tipo === 'Compra' || tipo === 'Nascimento') ? 'Externo' : origem,
                     destino: (tipo === 'Venda' || tipo === 'Abate' || tipo === 'Morte') ? 'Externo' : destino,
+                    fornecedor,
+                    valorFinanceiro,
                     criadoEm: new Date().toISOString()
                 });
                 
                 document.getElementById('quantidade').value = '';
+                document.getElementById('fornecedor').value = '';
+                document.getElementById('valor-financeiro').value = '';
             } catch (err) {
                 alert("Erro ao salvar no banco de dados.");
             } finally {
@@ -165,11 +200,17 @@
             }
         };
 
+        function formatarMoeda(valor) {
+            return `R$ ${valor.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        }
+
         function atualizarQuadroEstoque() {
             const saldos = {};
             let totalGeral = 0;
             let totalFemeas = 0;
             let totalMachos = 0;
+            let custoAquisicao = 0;
+            let receitaTotal = 0;
 
             locais.forEach(l => saldos[l.nome] = {});
 
@@ -177,19 +218,24 @@
                 const cat = mov.categoria;
                 const qtd = mov.quantidade;
 
-                if (mov.tipo === 'Compra' || mov.tipo === 'Nascimento') {
+                if (mov.tipo === 'Compra') {
+                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
+                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
+                    custoAquisicao += mov.valorFinanceiro || 0;
+                }
+                else if (mov.tipo === 'Nascimento') {
                     if (!saldos[mov.destino]) saldos[mov.destino] = {};
                     saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 } 
-                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') {
-                    if (saldos[mov.origem]) {
-                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    }
+                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate') {
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                    receitaTotal += mov.valorFinanceiro || 0;
+                }
+                else if (mov.tipo === 'Morte') {
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
                 } 
                 else if (mov.tipo === 'Transferência') {
-                    if (saldos[mov.origem]) {
-                        saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    }
+                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
                     if (!saldos[mov.destino]) saldos[mov.destino] = {};
                     saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
                 }
@@ -242,6 +288,10 @@
             document.getElementById('total-femeas').innerText = totalFemeas;
             document.getElementById('total-machos').innerText = totalMachos;
             
+            // Financial summary update (only visible in the app, hidden in print)
+            document.getElementById('val-custo-aquisicao').innerText = formatarMoeda(custoAquisicao);
+            document.getElementById('val-receita-total').innerText = formatarMoeda(receitaTotal);
+
             const hoje = new Date();
             document.getElementById('data-estoque').innerText = hoje.toLocaleDateString('pt-BR');
         }
@@ -403,6 +453,25 @@
                     </div>
                 </div>
 
+                <!-- QUADRO FINANCEIRO (OCULTO NO PDF, EXIBIDO APENAS NO APP) -->
+                <div class="no-print">
+                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro (App)</h2>
+                    <div class="rounded border border-slate-300 overflow-hidden bg-white">
+                        <table class="w-full text-xs border-collapse text-slate-900 font-medium">
+                            <tbody>
+                                <tr class="border-b border-slate-200">
+                                    <td class="bg-slate-50 p-2 border-r border-slate-200 w-1/2">Custo de Aquisição</td>
+                                    <td class="p-2 text-left font-bold text-red-700" id="val-custo-aquisicao">R$ 0,00</td>
+                                </tr>
+                                <tr>
+                                    <td class="bg-slate-50 p-2 border-r border-slate-200">Receita Total</td>
+                                    <td class="p-2 text-left font-bold text-emerald-700" id="val-receita-total">R$ 0,00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
                 <!-- HISTÓRICO REFINADO - 4 ÚLTIMAS TRANSFERÊNCIAS (EXIBIDO APENAS NO PDF) -->
                 <div class="hidden print-only mt-8 page-block">
                     <h2 class="text-sm font-bold text-emerald-800 uppercase mb-3 border-b-2 border-emerald-800 pb-1">Últimas Movimentações (Histórico Recente)</h2>
@@ -467,6 +536,18 @@
                             <div id="div-destino" class="col-span-2">
                                 <label class="block text-[11px] font-bold text-emerald-700 uppercase mb-1">Destino (Entrou em)</label>
                                 <select id="destino" class="w-full p-2 border border-emerald-200 rounded-md text-sm bg-emerald-50 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"></select>
+                            </div>
+                        </div>
+
+                        <!-- CAMPOS FINANCEIROS (MANTIDOS NO APP) -->
+                        <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 mt-3">
+                            <div id="div-fornecedor" class="col-span-2">
+                                <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Fornecedor / Comprador (Opcional)</label>
+                                <input type="text" id="fornecedor" class="w-full p-2 border border-slate-300 rounded-md text-sm bg-white">
+                            </div>
+                            <div id="div-valor" class="col-span-2">
+                                <label id="label-valor" class="block text-[11px] font-bold text-emerald-700 uppercase mb-1">Custo / Receita Total (R$)</label>
+                                <input type="number" step="0.01" id="valor-financeiro" class="w-full p-2 border border-emerald-300 rounded-md text-sm font-bold bg-emerald-50 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
                             </div>
                         </div>
 
