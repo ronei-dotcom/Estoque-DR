@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; }
+        
+        .print-only { display: none; }
 
         @media print {
             .no-print { display: none !important; }
@@ -22,6 +24,8 @@
             table.data-table { width: 100% !important; border-collapse: collapse !important; table-layout: fixed !important; }
             table.data-table th { background-color: #065f46 !important; color: #ffffff !important; font-weight: bold !important; padding: 6px 8px !important; font-size: 8pt !important; border: 1px solid #065f46 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             table.data-table td { padding: 6px 8px !important; border: 1px solid #cbd5e1 !important; font-size: 8.5pt !important; }
+
+            .lg\:grid-cols-2 > div { width: 100% !important; margin-bottom: 20px !important; page-break-inside: avoid; }
         }
     </style>
 
@@ -186,7 +190,7 @@
                 alert("Erro ao salvar no banco de dados.");
             } finally {
                 btnSubmit.disabled = false;
-                btnSubmit.innerText = "☁️ Salvar Movimentação";
+                btnSubmit.innerText = "Salvar Movimentação";
             }
         });
 
@@ -293,7 +297,10 @@
             document.getElementById('val-receita-total').innerText = formatarMoeda(receitaTotal);
 
             const hoje = new Date();
-            document.getElementById('data-estoque').innerText = hoje.toLocaleDateString('pt-BR');
+            const dia = String(hoje.getDate()).padStart(2, '0');
+            const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+            const ano = hoje.getFullYear();
+            document.getElementById('data-estoque').innerText = `${dia}/${mes}/${ano}`;
         }
 
         function atualizarTabelaHistorico() {
@@ -301,15 +308,14 @@
             const printHistorico = document.getElementById('print-historico');
             
             corpoTabela.innerHTML = '';
-            printHistorico.innerHTML = '';
-
+            
+            // Renderiza Histórico Completo no App (App Only)
             if (movimentacoes.length === 0) {
                 corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação.</td></tr>';
-                printHistorico.innerHTML = '<p class="text-slate-500 text-sm">Nenhuma movimentação recente.</p>';
+                printHistorico.innerHTML = '<p class="text-slate-500 text-sm mt-4">Nenhuma movimentação recente.</p>';
                 return;
             }
 
-            // Render all movements in the main table (UI)
             movimentacoes.forEach(mov => {
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-200 bg-white hover:bg-slate-50 text-xs";
@@ -331,37 +337,49 @@
                         <span class="text-[10px] text-slate-500 font-mono">${trajeto}</span>
                     </td>
                     <td class="p-1.5 text-center no-print">
-                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-slate-400 hover:text-red-600 text-[10px]">❌</button>
+                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-600 font-bold hover:underline text-[10px]">Excluir</button>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
 
-            // Render beautifully formatted last 4 movements for the Print Report
+            // Renderiza Histórico das 4 últimas em Tabela de Impressão (Print Only)
             const ultimas4 = movimentacoes.slice(0, 4);
+            
+            let printHTML = `
+                <table class="data-table w-full text-xs border-collapse border border-slate-300">
+                    <thead>
+                        <tr class="bg-emerald-800 text-white text-center font-bold">
+                            <th class="p-2 border border-emerald-800 w-[15%] text-center">Data</th>
+                            <th class="p-2 border border-emerald-800 w-[20%] text-center">Operação</th>
+                            <th class="p-2 border border-emerald-800 w-[15%] text-center">Qtd</th>
+                            <th class="p-2 border border-emerald-800 w-[50%] text-left">Detalhes / Trajeto</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
             ultimas4.forEach(mov => {
                 const partesData = mov.data.split('-');
                 const dataFormatada = `${partesData[2]}/${partesData[1]}/${partesData[0]}`;
 
                 let trajeto = '';
-                let icone = '🔄';
-                if(mov.tipo === 'Compra' || mov.tipo === 'Nascimento') { trajeto = `Destino: <b>${mov.destino}</b>`; icone = '🟢'; }
-                else if(mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') { trajeto = `Origem: <b>${mov.origem}</b>`; icone = '🔴'; }
-                else { trajeto = `<b>${mov.origem}</b> ➔ <b>${mov.destino}</b>`; icone = '🔵'; }
+                if(mov.tipo === 'Compra' || mov.tipo === 'Nascimento') { trajeto = `Destino: ${mov.destino}`; }
+                else if(mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') { trajeto = `Origem: ${mov.origem}`; }
+                else { trajeto = `${mov.origem} ➔ ${mov.destino}`; }
 
-                printHistorico.innerHTML += `
-                    <div class="border-b border-slate-300 py-3 flex justify-between items-center text-sm">
-                        <div>
-                            <div class="font-bold text-slate-800">${icone} ${mov.tipo.toUpperCase()} <span class="font-normal text-slate-600">— ${mov.categoria}</span></div>
-                            <div class="text-slate-600 text-xs mt-1">${trajeto}</div>
-                        </div>
-                        <div class="text-right">
-                            <div class="font-bold text-emerald-800 text-base">${mov.quantidade} <span class="text-xs font-normal">cabeças</span></div>
-                            <div class="text-slate-500 text-[10px] font-mono mt-0.5">${dataFormatada}</div>
-                        </div>
-                    </div>
+                printHTML += `
+                    <tr>
+                        <td class="p-2 text-center border border-slate-300 font-mono">${dataFormatada}</td>
+                        <td class="p-2 text-center font-bold text-slate-800 uppercase border border-slate-300">${mov.tipo}</td>
+                        <td class="p-2 text-center font-bold text-slate-900 border border-slate-300">${mov.quantidade}</td>
+                        <td class="p-2 text-slate-700 border border-slate-300">Cat: ${mov.categoria} | ${trajeto}</td>
+                    </tr>
                 `;
             });
+            
+            printHTML += `</tbody></table>`;
+            printHistorico.innerHTML = printHTML;
         }
 
         window.gerarRelatorioPDF = function() {
@@ -369,11 +387,12 @@
         };
 
         window.onload = () => {
-            // Adjust Date to Local Timezone to fix the day offset issue
-            const tzOffset = (new Date()).getTimezoneOffset() * 60000;
-            const dataLocal = new Date(Date.now() - tzOffset).toISOString().split('T')[0];
+            const hoje = new Date();
+            const ano = hoje.getFullYear();
+            const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+            const dia = String(hoje.getDate()).padStart(2, '0');
             
-            document.getElementById('data').value = dataLocal;
+            document.getElementById('data').value = `${ano}-${mes}-${dia}`;
             
             mudarTipoMovimento();
         };
@@ -396,9 +415,9 @@
 
         <!-- BARRA DE CONTROLE (OCULTA NO PDF) -->
         <div class="flex justify-between items-center mb-6 no-print bg-slate-50 p-3 rounded-lg border border-slate-200">
-            <span class="text-sm font-bold text-slate-700 flex items-center gap-1">📊 Relatório de Estoque</span>
+            <span class="text-sm font-bold text-slate-700 flex items-center gap-1">Relatório de Estoque</span>
             <button onclick="gerarRelatorioPDF()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-md text-xs flex items-center gap-2 shadow transition">
-                🖨️ Imprimir Relatório
+                Imprimir Relatório
             </button>
         </div>
 
@@ -453,8 +472,21 @@
                     </div>
                 </div>
 
+                <!-- HISTÓRICO REFINADO EM TABELA - 4 ÚLTIMAS TRANSFERÊNCIAS (EXIBIDO APENAS NO PDF) -->
+                <div class="print-only mt-8 page-block">
+                    <h2 class="text-sm font-bold text-emerald-800 uppercase mb-3 border-b-2 border-emerald-800 pb-1">Últimas Movimentações (Histórico Recente)</h2>
+                    <div id="print-historico" class="overflow-hidden rounded border border-slate-300">
+                        <!-- Preenchido via JS com Tabela Limpa -->
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO GERAL (OCULTA NO PDF) -->
+            <div class="space-y-8 no-print">
+                
                 <!-- QUADRO FINANCEIRO (OCULTO NO PDF, EXIBIDO APENAS NO APP) -->
-                <div class="no-print">
+                <div>
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro (App)</h2>
                     <div class="rounded border border-slate-300 overflow-hidden bg-white">
                         <table class="w-full text-xs border-collapse text-slate-900 font-medium">
@@ -471,20 +503,7 @@
                         </table>
                     </div>
                 </div>
-                
-                <!-- HISTÓRICO REFINADO - 4 ÚLTIMAS TRANSFERÊNCIAS (EXIBIDO APENAS NO PDF) -->
-                <div class="hidden print-only mt-8 page-block">
-                    <h2 class="text-sm font-bold text-emerald-800 uppercase mb-3 border-b-2 border-emerald-800 pb-1">Últimas Movimentações (Histórico Recente)</h2>
-                    <div id="print-historico" class="space-y-1">
-                        <!-- Preenchido via JS com formatação limpa e moderna -->
-                    </div>
-                </div>
 
-            </div>
-
-            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO GERAL (OCULTA NO PDF) -->
-            <div class="space-y-8 no-print">
-                
                 <!-- FORMULÁRIO -->
                 <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-4 tracking-tight border-b border-slate-100 pb-2">Registrar Movimentação</h2>
@@ -552,7 +571,7 @@
                         </div>
 
                         <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-md text-sm transition shadow-sm mt-2">
-                            ☁️ Salvar Movimentação
+                            Salvar Movimentação
                         </button>
                     </form>
                 </div>
