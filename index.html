@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Estoque DR - Gestão de Rebanho</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; }
@@ -27,8 +26,7 @@
 
             .lg\:grid-cols-2 > div { width: 100% !important; margin-bottom: 20px !important; page-break-inside: avoid; }
             
-            /* Oculta blocos financeiros quando no modo peão */
-            body.modo-peao .financeiro-info { display: none !important; }
+            body.modo-estoque-simples .financeiro-info { display: none !important; }
         }
     </style>
 
@@ -87,7 +85,7 @@
                 if(tipo === 'Compra') {
                     divFornecedor.classList.remove('hidden');
                     divValor.classList.remove('hidden');
-                    labelValor.innerText = "Custo Total da Compra (R$)";
+                    labelValor.innerText = "Custo Total da Compra";
                 } else {
                     divFornecedor.classList.add('hidden');
                     divValor.classList.add('hidden');
@@ -99,7 +97,7 @@
                 if (tipo === 'Venda' || tipo === 'Abate') {
                     divFornecedor.classList.remove('hidden');
                     divValor.classList.remove('hidden');
-                    labelValor.innerText = "Receita Total (R$)";
+                    labelValor.innerText = "Receita Total";
                 } else {
                     divFornecedor.classList.add('hidden');
                     divValor.classList.add('hidden');
@@ -113,7 +111,7 @@
         };
 
         window.adicionarLocal = async function() {
-            const novoLocal = prompt("Digite o nome do Local (Pasto/Fazenda):");
+            const novoLocal = prompt("Digite o nome do Local:");
             if (novoLocal && novoLocal.trim() !== "") {
                 try {
                     await addDoc(colLocais, { nome: novoLocal.trim() });
@@ -170,7 +168,6 @@
                 alert("A Origem e o Destino não podem ser iguais."); return;
             }
 
-            // Trava de Estoque: Impede movimentação se o saldo for menor que a quantidade
             if (['Venda', 'Abate', 'Morte', 'Transferência'].includes(tipo)) {
                 const saldoAtualOrigem = (saldosGlobais[origem] && saldosGlobais[origem][categoria]) ? saldosGlobais[origem][categoria] : 0;
                 if (quantidade > saldoAtualOrigem) {
@@ -208,7 +205,7 @@
         });
 
         window.apagarMovimentacao = async function(idDoc) {
-            if(confirm("Deseja apagar este registro? O estoque e o valor financeiro serão recalculados.")) {
+            if(confirm("Deseja apagar este registro? O estoque será recalculado.")) {
                 try {
                     await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
                 } catch(err) {
@@ -226,15 +223,13 @@
             let totalGeral = 0;
             let totalFemeas = 0;
             let totalMachos = 0;
-            
-            // Variáveis globais para cálculo do "Valor do Estoque"
+            let custoAquisicao = 0;
+            let receitaTotal = 0;
             let estoque_cabecas_compradas = 0;
             let valor_estoque = 0;
-            let receitaTotal = 0;
 
             locais.forEach(l => saldosGlobais[l.nome] = {});
 
-            // Ordenação cronológica para fazer a matemática correta do valor médio de estoque
             const movsChronological = [...movimentacoes].sort((a,b) => new Date(a.data) - new Date(b.data) || a.idDoc.localeCompare(b.idDoc));
 
             movsChronological.forEach(mov => {
@@ -244,22 +239,18 @@
                 if (mov.tipo === 'Compra') {
                     if (!saldosGlobais[mov.destino]) saldosGlobais[mov.destino] = {};
                     saldosGlobais[mov.destino][cat] = (saldosGlobais[mov.destino][cat] || 0) + qtd;
-                    
                     estoque_cabecas_compradas += qtd;
                     valor_estoque += (mov.valorFinanceiro || 0);
                 }
                 else if (mov.tipo === 'Nascimento') {
                     if (!saldosGlobais[mov.destino]) saldosGlobais[mov.destino] = {};
                     saldosGlobais[mov.destino][cat] = (saldosGlobais[mov.destino][cat] || 0) + qtd;
-                    
                     estoque_cabecas_compradas += qtd;
                 } 
                 else if (['Venda', 'Abate', 'Morte'].includes(mov.tipo)) {
                     if (saldosGlobais[mov.origem]) {
                         saldosGlobais[mov.origem][cat] = (saldosGlobais[mov.origem][cat] || 0) - qtd;
                     }
-                    
-                    // Cálculo do Custo Médio e Abatimento do Valor de Estoque
                     let custo_medio = estoque_cabecas_compradas > 0 ? valor_estoque / estoque_cabecas_compradas : 0;
                     valor_estoque -= (custo_medio * qtd);
                     estoque_cabecas_compradas -= qtd;
@@ -342,14 +333,14 @@
             const printHistorico = document.getElementById('print-historico');
             
             corpoTabela.innerHTML = '';
-            
+            printHistorico.innerHTML = '';
+
             if (movimentacoes.length === 0) {
                 corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação.</td></tr>';
                 printHistorico.innerHTML = '<p class="text-slate-500 text-sm mt-4">Nenhuma movimentação recente.</p>';
                 return;
             }
 
-            // Tabela do App
             movimentacoes.forEach(mov => {
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-200 bg-white hover:bg-slate-50 text-xs";
@@ -383,9 +374,7 @@
                 corpoTabela.appendChild(tr);
             });
 
-            // Tabela de Impressão (Apenas as 4 últimas movimentações, sem emojis e formatada)
             const ultimas4 = movimentacoes.slice(0, 4);
-            
             let printHTML = `
                 <table class="data-table w-full text-xs border-collapse border border-slate-300">
                     <thead>
@@ -428,20 +417,19 @@
         }
 
         window.gerarRelatorioPeao = function() {
-            document.body.classList.add('modo-peao');
+            document.body.classList.add('modo-estoque-simples');
             window.print();
-            setTimeout(() => { document.body.classList.remove('modo-peao'); }, 1000);
+            setTimeout(() => { document.body.classList.remove('modo-estoque-simples'); }, 1000);
         };
 
         window.gerarRelatorioChefe = function() {
-            document.body.classList.remove('modo-peao');
+            document.body.classList.remove('modo-estoque-simples');
             window.print();
         };
 
         window.onload = () => {
             const tzOffset = (new Date()).getTimezoneOffset() * 60000;
             const dataLocal = new Date(Date.now() - tzOffset).toISOString().split('T')[0];
-            
             document.getElementById('data').value = dataLocal;
             mudarTipoMovimento();
         };
@@ -451,7 +439,6 @@
 
     <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden p-4 md:p-6 print-container">
         
-        <!-- CABEÇALHO DO APLICATIVO / RELATÓRIO -->
         <div class="border-b-2 border-emerald-800 pb-3 mb-4 flex justify-between items-end page-block">
             <div>
                 <h1 class="text-xl md:text-2xl font-bold text-emerald-800 uppercase tracking-tight">Estoque DR</h1>
@@ -462,22 +449,20 @@
             </div>
         </div>
 
-        <!-- BARRA DE CONTROLE (OCULTA NO PDF) -->
         <div class="flex justify-between items-center mb-6 no-print bg-slate-50 p-3 rounded-lg border border-slate-200">
-            <span class="text-sm font-bold text-slate-700">Relatórios de Impressão</span>
+            <span class="text-sm font-bold text-slate-700 flex items-center gap-1">Relatórios de Impressão</span>
             <div class="flex gap-2">
-                <button onclick="gerarRelatorio()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
-                    Imprimir: Estoque (Peão)
+                <button onclick="gerarRelatorioPeao()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
+                    IMPRIMIR: ESTOQUE
                 </button>
-                <button onclick="gerarRelatorio()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
-                    Imprimir: Transações (Chefe)
+                <button onclick="gerarRelatorioChefe()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
+                    IMPRIMIR: TRANSAÇÕES
                 </button>
             </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             
-            <!-- COLUNA ESQUERDA: ESTOQUE (IMPRESSA NO PDF) -->
             <div class="space-y-6 page-block">
                 <div>
                     <div class="flex justify-between items-end mb-2 no-print">
@@ -509,7 +494,6 @@
                         </table>
                     </div>
 
-                    <!-- Resumo Sexo -->
                     <div class="w-full md:w-3/5 mt-4">
                         <table class="w-full text-xs border-collapse border border-slate-300 shadow-sm bg-white rounded overflow-hidden">
                             <tbody>
@@ -526,22 +510,18 @@
                     </div>
                 </div>
 
-                <!-- HISTÓRICO REFINADO EM TABELA (EXIBIDO APENAS NO PDF) -->
                 <div class="print-only mt-8 page-block">
                     <h2 class="text-sm font-bold text-emerald-800 uppercase mb-3 border-b-2 border-emerald-800 pb-1">Últimas Movimentações (Histórico Recente)</h2>
                     <div id="print-historico" class="overflow-hidden rounded border border-slate-300">
-                        <!-- Preenchido via JS com Tabela -->
                     </div>
                 </div>
 
             </div>
 
-            <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO GERAL (OCULTA NO PDF) -->
             <div class="space-y-8 no-print">
                 
-                <!-- QUADRO FINANCEIRO (OCULTO NO PDF PEÃO, EXIBIDO NO APP E PDF CHEFE) -->
                 <div class="financeiro-info">
-                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro (Chefe)</h2>
+                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro</h2>
                     <div class="rounded border border-slate-300 overflow-hidden bg-white">
                         <table class="w-full text-xs border-collapse text-slate-900 font-medium">
                             <tbody>
@@ -558,7 +538,6 @@
                     </div>
                 </div>
 
-                <!-- FORMULÁRIO -->
                 <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-4 tracking-tight border-b border-slate-100 pb-2">Registrar Movimentação</h2>
                     
@@ -579,10 +558,10 @@
                             <div class="col-span-2 md:col-span-1">
                                 <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Categoria</label>
                                 <select id="categoria" class="w-full p-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-emerald-500 focus:border-emerald-500 outline-none transition">
-                                    <option value="Bezerros (M)">Bezerros (M)</option>
-                                    <option value="Bezerras (F)">Bezerras (F)</option>
-                                    <option value="Garrotes (M)">Garrotes (M)</option>
-                                    <option value="Novilhas (F)">Novilhas (F)</option>
+                                    <option value="Bezerros">Bezerros</option>
+                                    <option value="Bezerras">Bezerras</option>
+                                    <option value="Garrotes">Garrotes</option>
+                                    <option value="Novilhas">Novilhas</option>
                                     <option value="Boi Magro">Boi Magro</option>
                                     <option value="Boi Gordo">Boi Gordo</option>
                                     <option value="Vacas">Vacas</option>
@@ -612,7 +591,6 @@
                             </div>
                         </div>
 
-                        <!-- CAMPOS FINANCEIROS -->
                         <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 mt-3">
                             <div id="div-fornecedor" class="col-span-2">
                                 <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Fornecedor / Comprador (Opcional)</label>
@@ -630,7 +608,6 @@
                     </form>
                 </div>
 
-                <!-- HISTÓRICO GERAL EM TABELA -->
                 <div>
                     <h2 class="text-sm font-bold text-slate-800 uppercase mb-3 border-b border-slate-200 pb-1">Histórico Completo</h2>
                     <div class="overflow-x-auto rounded border border-slate-300 bg-white max-h-72 overflow-y-auto">
