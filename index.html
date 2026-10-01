@@ -26,6 +26,9 @@
             table.data-table td { padding: 6px 8px !important; border: 1px solid #cbd5e1 !important; font-size: 8.5pt !important; }
 
             .lg\:grid-cols-2 > div { width: 100% !important; margin-bottom: 20px !important; page-break-inside: avoid; }
+            
+            /* Oculta blocos financeiros quando no modo peão */
+            body.modo-peao .financeiro-info { display: none !important; }
         }
     </style>
 
@@ -50,6 +53,7 @@
 
         let locais = [];
         let movimentacoes = [];
+        let saldosGlobais = {};
 
         onSnapshot(colLocais, (snapshot) => {
             locais = [];
@@ -166,6 +170,15 @@
                 alert("A Origem e o Destino não podem ser iguais."); return;
             }
 
+            // Trava de Estoque: Impede movimentação se o saldo for menor que a quantidade
+            if (['Venda', 'Abate', 'Morte', 'Transferência'].includes(tipo)) {
+                const saldoAtualOrigem = (saldosGlobais[origem] && saldosGlobais[origem][categoria]) ? saldosGlobais[origem][categoria] : 0;
+                if (quantidade > saldoAtualOrigem) {
+                    alert(`OPERAÇÃO BLOQUEADA!\n\nVocê está tentando movimentar ${quantidade} cabeças de ${categoria} de "${origem}", mas o saldo atual deste lote neste local é de apenas ${saldoAtualOrigem} cabeças.\n\nVerifique o estoque antes de salvar.`);
+                    return;
+                }
+            }
+
             const btnSubmit = document.getElementById('btn-submit');
             btnSubmit.disabled = true;
             btnSubmit.innerText = "Gravando...";
@@ -195,7 +208,7 @@
         });
 
         window.apagarMovimentacao = async function(idDoc) {
-            if(confirm("Deseja apagar este registro? O estoque será recalculado.")) {
+            if(confirm("Deseja apagar este registro? O estoque e o valor financeiro serão recalculados.")) {
                 try {
                     await deleteDoc(doc(db, "movimentacoes_gado_dr", idDoc));
                 } catch(err) {
@@ -209,54 +222,76 @@
         }
 
         function atualizarQuadroEstoque() {
-            const saldos = {};
+            saldosGlobais = {};
             let totalGeral = 0;
             let totalFemeas = 0;
             let totalMachos = 0;
-            let custoAquisicao = 0;
+            
+            // Variáveis globais para cálculo do "Valor do Estoque"
+            let estoque_cabecas_compradas = 0;
+            let valor_estoque = 0;
             let receitaTotal = 0;
 
-            locais.forEach(l => saldos[l.nome] = {});
+            locais.forEach(l => saldosGlobais[l.nome] = {});
 
-            movimentacoes.forEach(mov => {
+            // Ordenação cronológica para fazer a matemática correta do valor médio de estoque
+            const movsChronological = [...movimentacoes].sort((a,b) => new Date(a.data) - new Date(b.data) || a.idDoc.localeCompare(b.idDoc));
+
+            movsChronological.forEach(mov => {
                 const cat = mov.categoria;
                 const qtd = mov.quantidade;
 
                 if (mov.tipo === 'Compra') {
-                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
-                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
-                    custoAquisicao += mov.valorFinanceiro || 0;
+                    if (!saldosGlobais[mov.destino]) saldosGlobais[mov.destino] = {};
+                    saldosGlobais[mov.destino][cat] = (saldosGlobais[mov.destino][cat] || 0) + qtd;
+                    
+                    estoque_cabecas_compradas += qtd;
+                    valor_estoque += (mov.valorFinanceiro || 0);
                 }
                 else if (mov.tipo === 'Nascimento') {
-                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
-                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
+                    if (!saldosGlobais[mov.destino]) saldosGlobais[mov.destino] = {};
+                    saldosGlobais[mov.destino][cat] = (saldosGlobais[mov.destino][cat] || 0) + qtd;
+                    
+                    estoque_cabecas_compradas += qtd;
                 } 
-                else if (mov.tipo === 'Venda' || mov.tipo === 'Abate') {
-                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    receitaTotal += mov.valorFinanceiro || 0;
-                }
-                else if (mov.tipo === 'Morte') {
-                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
+                else if (['Venda', 'Abate', 'Morte'].includes(mov.tipo)) {
+                    if (saldosGlobais[mov.origem]) {
+                        saldosGlobais[mov.origem][cat] = (saldosGlobais[mov.origem][cat] || 0) - qtd;
+                    }
+                    
+                    // Cálculo do Custo Médio e Abatimento do Valor de Estoque
+                    let custo_medio = estoque_cabecas_compradas > 0 ? valor_estoque / estoque_cabecas_compradas : 0;
+                    valor_estoque -= (custo_medio * qtd);
+                    estoque_cabecas_compradas -= qtd;
+                    
+                    if (valor_estoque < 0) valor_estoque = 0;
+                    if (estoque_cabecas_compradas < 0) estoque_cabecas_compradas = 0;
+
+                    if (['Venda', 'Abate'].includes(mov.tipo)) {
+                        receitaTotal += (mov.valorFinanceiro || 0);
+                    }
                 } 
                 else if (mov.tipo === 'Transferência') {
-                    if (saldos[mov.origem]) saldos[mov.origem][cat] = (saldos[mov.origem][cat] || 0) - qtd;
-                    if (!saldos[mov.destino]) saldos[mov.destino] = {};
-                    saldos[mov.destino][cat] = (saldos[mov.destino][cat] || 0) + qtd;
+                    if (saldosGlobais[mov.origem]) {
+                        saldosGlobais[mov.origem][cat] = (saldosGlobais[mov.origem][cat] || 0) - qtd;
+                    }
+                    if (!saldosGlobais[mov.destino]) saldosGlobais[mov.destino] = {};
+                    saldosGlobais[mov.destino][cat] = (saldosGlobais[mov.destino][cat] || 0) + qtd;
                 }
             });
 
             const tbody = document.getElementById('tabela-estoque-corpo');
             tbody.innerHTML = '';
 
-            for (const local in saldos) {
-                const categoriasLocal = Object.keys(saldos[local]).filter(c => saldos[local][c] > 0);
+            for (const local in saldosGlobais) {
+                const categoriasLocal = Object.keys(saldosGlobais[local]).filter(c => saldosGlobais[local][c] > 0);
                 const spanLocal = categoriasLocal.length;
                 let primeiraLinha = true;
 
                 if (spanLocal === 0) continue;
 
                 categoriasLocal.forEach(cat => {
-                    const qtd = saldos[local][cat];
+                    const qtd = saldosGlobais[local][cat];
                     totalGeral += qtd;
 
                     const catLower = cat.toLowerCase();
@@ -292,8 +327,7 @@
             document.getElementById('total-femeas').innerText = totalFemeas;
             document.getElementById('total-machos').innerText = totalMachos;
             
-            // Financial summary update (only visible in the app, hidden in print)
-            document.getElementById('val-custo-aquisicao').innerText = formatarMoeda(custoAquisicao);
+            document.getElementById('val-valor-estoque').innerText = formatarMoeda(valor_estoque);
             document.getElementById('val-receita-total').innerText = formatarMoeda(receitaTotal);
 
             const hoje = new Date();
@@ -309,13 +343,13 @@
             
             corpoTabela.innerHTML = '';
             
-            // Renderiza Histórico Completo no App (App Only)
             if (movimentacoes.length === 0) {
                 corpoTabela.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-400">Nenhuma movimentação.</td></tr>';
                 printHistorico.innerHTML = '<p class="text-slate-500 text-sm mt-4">Nenhuma movimentação recente.</p>';
                 return;
             }
 
+            // Tabela do App
             movimentacoes.forEach(mov => {
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-200 bg-white hover:bg-slate-50 text-xs";
@@ -328,22 +362,28 @@
                 else if(mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') trajeto = `Saiu de: <b>${mov.origem}</b>`;
                 else trajeto = `De: <b>${mov.origem}</b> ➔ Para: <b>${mov.destino}</b>`;
 
+                let infoFinanceira = '';
+                if (mov.fornecedor || mov.valorFinanceiro > 0) {
+                    infoFinanceira = `<span class="financeiro-info block mt-1 text-[10px] text-emerald-700 font-bold">Fornecedor/Cliente: ${mov.fornecedor || '-'} | ${formatarMoeda(mov.valorFinanceiro || 0)}</span>`;
+                }
+
                 tr.innerHTML = `
                     <td class="p-1.5 text-center font-mono text-slate-600">${dataFormatada}</td>
                     <td class="p-1.5 font-bold text-slate-800 uppercase">${mov.tipo}</td>
                     <td class="p-1.5 text-center font-bold text-slate-900">${mov.quantidade}</td>
                     <td class="p-1.5 text-slate-600">
-                        <b>Cat:</b> ${mov.categoria}<br>
+                        <b>Categoria:</b> ${mov.categoria}<br>
                         <span class="text-[10px] text-slate-500 font-mono">${trajeto}</span>
+                        ${infoFinanceira}
                     </td>
-                    <td class="p-1.5 text-center no-print">
-                        <button onclick="apagarMovimentacao('${mov.idDoc}')" title="Excluir" class="text-red-600 font-bold hover:underline text-[10px]">Excluir</button>
+                    <td class="p-1.5 text-center no-print col-acao">
+                        <button onclick="apagarMovimentacao('${mov.idDoc}')" class="text-slate-400 hover:text-red-600 font-bold text-[10px] uppercase">Excluir</button>
                     </td>
                 `;
                 corpoTabela.appendChild(tr);
             });
 
-            // Renderiza Histórico das 4 últimas em Tabela de Impressão (Print Only)
+            // Tabela de Impressão (Apenas as 4 últimas movimentações, sem emojis e formatada)
             const ultimas4 = movimentacoes.slice(0, 4);
             
             let printHTML = `
@@ -366,14 +406,19 @@
                 let trajeto = '';
                 if(mov.tipo === 'Compra' || mov.tipo === 'Nascimento') { trajeto = `Destino: ${mov.destino}`; }
                 else if(mov.tipo === 'Venda' || mov.tipo === 'Abate' || mov.tipo === 'Morte') { trajeto = `Origem: ${mov.origem}`; }
-                else { trajeto = `${mov.origem} ➔ ${mov.destino}`; }
+                else { trajeto = `Origem: ${mov.origem} ➔ Destino: ${mov.destino}`; }
+                
+                let infoFinanceira = '';
+                if (mov.valorFinanceiro > 0) {
+                    infoFinanceira = `<span class="financeiro-info font-bold text-emerald-800"> | ${formatarMoeda(mov.valorFinanceiro || 0)}</span>`;
+                }
 
                 printHTML += `
                     <tr>
                         <td class="p-2 text-center border border-slate-300 font-mono">${dataFormatada}</td>
                         <td class="p-2 text-center font-bold text-slate-800 uppercase border border-slate-300">${mov.tipo}</td>
-                        <td class="p-2 text-center font-bold text-slate-900 border border-slate-300">${mov.quantidade}</td>
-                        <td class="p-2 text-slate-700 border border-slate-300">Cat: ${mov.categoria} | ${trajeto}</td>
+                        <td class="p-2 text-center font-bold text-slate-900 border border-slate-300">${mov.quantidade} cabeças</td>
+                        <td class="p-2 text-slate-700 border border-slate-300">Categoria: ${mov.categoria}<br><span class="text-[10px]">${trajeto}</span>${infoFinanceira}</td>
                     </tr>
                 `;
             });
@@ -382,18 +427,22 @@
             printHistorico.innerHTML = printHTML;
         }
 
-        window.gerarRelatorioPDF = function() {
+        window.gerarRelatorioPeao = function() {
+            document.body.classList.add('modo-peao');
+            window.print();
+            setTimeout(() => { document.body.classList.remove('modo-peao'); }, 1000);
+        };
+
+        window.gerarRelatorioChefe = function() {
+            document.body.classList.remove('modo-peao');
             window.print();
         };
 
         window.onload = () => {
-            const hoje = new Date();
-            const ano = hoje.getFullYear();
-            const mes = String(hoje.getMonth() + 1).padStart(2, '0');
-            const dia = String(hoje.getDate()).padStart(2, '0');
+            const tzOffset = (new Date()).getTimezoneOffset() * 60000;
+            const dataLocal = new Date(Date.now() - tzOffset).toISOString().split('T')[0];
             
-            document.getElementById('data').value = `${ano}-${mes}-${dia}`;
-            
+            document.getElementById('data').value = dataLocal;
             mudarTipoMovimento();
         };
     </script>
@@ -415,10 +464,15 @@
 
         <!-- BARRA DE CONTROLE (OCULTA NO PDF) -->
         <div class="flex justify-between items-center mb-6 no-print bg-slate-50 p-3 rounded-lg border border-slate-200">
-            <span class="text-sm font-bold text-slate-700 flex items-center gap-1">Relatório de Estoque</span>
-            <button onclick="gerarRelatorioPDF()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-md text-xs flex items-center gap-2 shadow transition">
-                Imprimir Relatório
-            </button>
+            <span class="text-sm font-bold text-slate-700">Relatórios de Impressão</span>
+            <div class="flex gap-2">
+                <button onclick="gerarRelatorioPeao()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
+                    Imprimir: Estoque (Peão)
+                </button>
+                <button onclick="gerarRelatorioChefe()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-md text-xs shadow transition uppercase tracking-wider">
+                    Imprimir: Transações (Chefe)
+                </button>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -428,8 +482,8 @@
                 <div>
                     <div class="flex justify-between items-end mb-2 no-print">
                         <h2 class="text-sm font-bold text-emerald-800 uppercase">Posição de Estoque</h2>
-                        <button onclick="adicionarLocal()" class="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded border border-emerald-200 transition">
-                            + Cadastrar Local
+                        <button onclick="adicionarLocal()" class="text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded border border-emerald-200 transition uppercase">
+                            Cadastrar Local
                         </button>
                     </div>
                     
@@ -472,11 +526,11 @@
                     </div>
                 </div>
 
-                <!-- HISTÓRICO REFINADO EM TABELA - 4 ÚLTIMAS TRANSFERÊNCIAS (EXIBIDO APENAS NO PDF) -->
+                <!-- HISTÓRICO REFINADO EM TABELA (EXIBIDO APENAS NO PDF) -->
                 <div class="print-only mt-8 page-block">
                     <h2 class="text-sm font-bold text-emerald-800 uppercase mb-3 border-b-2 border-emerald-800 pb-1">Últimas Movimentações (Histórico Recente)</h2>
                     <div id="print-historico" class="overflow-hidden rounded border border-slate-300">
-                        <!-- Preenchido via JS com Tabela Limpa -->
+                        <!-- Preenchido via JS com Tabela -->
                     </div>
                 </div>
 
@@ -485,18 +539,18 @@
             <!-- COLUNA DIREITA: FORMULÁRIO E HISTÓRICO GERAL (OCULTA NO PDF) -->
             <div class="space-y-8 no-print">
                 
-                <!-- QUADRO FINANCEIRO (OCULTO NO PDF, EXIBIDO APENAS NO APP) -->
-                <div>
-                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro (App)</h2>
+                <!-- QUADRO FINANCEIRO (OCULTO NO PDF PEÃO, EXIBIDO NO APP E PDF CHEFE) -->
+                <div class="financeiro-info">
+                    <h2 class="text-sm font-bold text-slate-800 uppercase mb-2 border-b border-slate-200 pb-1">Resumo Financeiro (Chefe)</h2>
                     <div class="rounded border border-slate-300 overflow-hidden bg-white">
                         <table class="w-full text-xs border-collapse text-slate-900 font-medium">
                             <tbody>
                                 <tr class="border-b border-slate-200">
-                                    <td class="bg-slate-50 p-2 border-r border-slate-200 w-1/2">Custo de Aquisição</td>
-                                    <td class="p-2 text-left font-bold text-red-700" id="val-custo-aquisicao">R$ 0,00</td>
+                                    <td class="bg-slate-50 p-2 border-r border-slate-200 w-1/2">Valor do Estoque (Custo em Pasto)</td>
+                                    <td class="p-2 text-left font-bold text-red-700" id="val-valor-estoque">R$ 0,00</td>
                                 </tr>
                                 <tr>
-                                    <td class="bg-slate-50 p-2 border-r border-slate-200">Receita Total</td>
+                                    <td class="bg-slate-50 p-2 border-r border-slate-200">Receita Total de Vendas / Abate</td>
                                     <td class="p-2 text-left font-bold text-emerald-700" id="val-receita-total">R$ 0,00</td>
                                 </tr>
                             </tbody>
@@ -558,7 +612,7 @@
                             </div>
                         </div>
 
-                        <!-- CAMPOS FINANCEIROS (MANTIDOS NO APP) -->
+                        <!-- CAMPOS FINANCEIROS -->
                         <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 mt-3">
                             <div id="div-fornecedor" class="col-span-2">
                                 <label class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Fornecedor / Comprador (Opcional)</label>
@@ -570,7 +624,7 @@
                             </div>
                         </div>
 
-                        <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-md text-sm transition shadow-sm mt-2">
+                        <button type="submit" id="btn-submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-md text-sm transition shadow-sm mt-2 uppercase tracking-wide">
                             Salvar Movimentação
                         </button>
                     </form>
@@ -587,7 +641,7 @@
                                     <th class="p-2 border-b border-slate-300 w-[25%]">Tipo</th>
                                     <th class="p-2 border-b border-slate-300 text-center w-[10%]">Qtd</th>
                                     <th class="p-2 border-b border-slate-300 w-[45%]">Detalhes</th>
-                                    <th class="p-2 border-b border-slate-300 text-center w-[5%]">Ação</th>
+                                    <th class="p-2 border-b border-slate-300 text-center w-[5%] col-acao">Ação</th>
                                 </tr>
                             </thead>
                             <tbody id="tabela-historico">
